@@ -276,13 +276,19 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
 
 角色说明放在 Global 工作区根目录的 `LG-ROLE.md`，由 `agent-instructions` 每个会话加载。写权限只用于 Global 自己的草稿目录，由 lg-scope 限定。
 
+**关掉别的 preset 不等于切不过去。** bundle 的 patch 层在用户 patch 层之下，用户在 `cordis.patch.yml` 里重写 `agent-preset-registry.default` 就能把会话切回带 bash 的 standard。所以 preset 只负责“默认安全”，真正的保证由 lg-integrity 在启动时给出：它读取组合后的 preset 注册表，断言 `default` 是 `lg-global`、且没有其他 preset 处于启用状态，任何一条不成立就发 ISOLATION\_REPORT 并拒绝工作。
+
 **lg-global 只能装进专用 profile。** 它会关掉所在 profile 里的 standard 等 preset，装进用户平时用的 profile 会让那个 profile 失去 bash。所以 lg-scope 启动时检查当前 profile 名，必须以 `lg-global` 开头（前缀可配置），否则拒绝启动并说明原因。profile 名从 dsh 的 `profileContext` 服务读取，具体字段以所用版本为准。
 
 **lg-scope：文件与网络的范围**
 
 - **文件**：守卫检查 `read`、`read_image`、`write`、`edit`、`glob`、`grep` 的路径参数（`file_path` 或 `path`）。先按会话目录解析成绝对路径，再取真实路径，必须落在 Global 工作区内，否则拒绝。取真实路径是为了挡住 `..` 和符号链接逃逸。
 - **工具名**：`bash`、`pwsh`、`terminal_*`、`job_*`、`subagent*` 等执行类和派生类工具一律拒绝。preset 里本来就没有它们，这是第二道防线。
-- **网络**：在 `tools/pre-execute` 里检查 `web_fetch` 的目标。先解析域名，指向本机、局域网或链路本地地址（127.0.0.0/8、::1、10.0.0.0/8、172.16.0.0/12、192.168.0.0/16、169.254.0.0/16 等）就拒绝。放在 pre-execute 而不是守卫里，是因为解析域名是异步的，守卫必须同步。可选严格模式：只放行白名单域名。
+- **网络**：在 `tools/pre-execute` 里检查 `web_fetch` 的目标，默认是 **allowlist**，名单可配置。放 pre-execute 而不是守卫里，是因为解析域名是异步的，守卫必须同步。
+  - 只允许 `http` 和 `https`；`file://`、`ftp://`、`data:` 等其他协议一律拒绝。
+  - 比对的是**解析后的地址**与声明的域名两者：域名必须在名单里，解析结果也不能落在本机、局域网或链路本地地址（127.0.0.0/8、::1、10.0.0.0/8、172.16.0.0/12、192.168.0.0/16、169.254.0.0/16 等）。
+  - 先解析再判断存在 DNS rebinding 的时间差：名单模式要求解析结果命中名单里预先登记的地址集合，或把解析结果固定之后才发请求。
+  - 默认名单（可覆盖）：`github.com`、`api.github.com`、`raw.githubusercontent.com`、`codeload.github.com`、`objects.githubusercontent.com`、`gist.github.com`、`gist.githubusercontent.com`。这张表只覆盖“读 GitHub 上的公开仓库内容”，模型 API 走适配器自己的网络，不经过 `web_fetch`。
 
 **lg-repo：Global 读仓库的唯一途径**
 
@@ -293,14 +299,19 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
 | `lg_repo_diff` | 两个 commit 之间的 diff，可按路径过滤 |
 | `lg_repo_show` | 读某个 commit 下的某个文件 |
 
-远端可以是 GitHub（只读 token），也可以是本机的 bare 仓库（`file://` 路径）。插件里没有任何 push 代码路径。
+远端可以是 GitHub（只读凭据），也可以是本机的 bare 仓库（`file://` 路径）。插件里没有任何 push 代码路径，但仍要把“推不上去”做成事实而不是约定：
+
+- 建立镜像后立即把 `remote.origin.pushurl` 设成无效值（例如 `file:///dev/null`），让同一个 origin 想推也推不了。
+- 凭据只给只读权限：deploy key 只读，或 fine-grained token 只开 Contents: Read。
+- 启动探针实测：用现有凭据对镜像执行一次 `git push --dry-run`，**必须失败**；成功就说明环境里混进了写凭据，发 ISOLATION\_REPORT 并拒绝工作。
 
 **lg-directive：Global 的写出口**
 
 - `lg_directive`：发 DIRECTIVE。插件保存当前版本并自动递增版本号，要求目标、优先级、验收标准全部写全，不接受增量指令。
 - `lg_draft_reset`：把草稿目录 `drafts/` 重置到指定 base。草稿目录与只读镜像分开，Global 在这里改代码。
 - `lg_patch_send`：在草稿目录提交改动，执行 `git format-patch`，打包成补丁信封（base、bytes、sha256、base64 分片），先发 CLAIM 再发 PATCH。
-- `lg_stop`：发 STOP。工具要求每条验收标准都给出证据路径，并在镜像的最终 commit 上逐个打开清单，检查 environment 为 `real` 且 digest 是当前版本；任何一条不满足就拒绝发送。
+- `lg_stop`：发 STOP。工具**先执行一次 `lg_repo_sync`**，再以配置的 `final_commit` 与镜像 HEAD 比对，两者不一致直接拒绝——否则会对着一个落后的镜像验收。比对通过后逐条打开验收标准对应的清单，检查 environment 为 `real` 且 digest 是当前版本；任何一条不满足就拒绝发送。
+- `environment` 是自报字段，Global 无法独立验证“这条证据真的来自目标环境”。这一点留到 M3 的 lg-evidence 解决（要求 real 证据附带只有目标环境能产生的探针输出），M2 只把它当声明记录。
 
 **lg-checkpoint：保护全局视角**
 
@@ -311,13 +322,17 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
 
 启动时和每次 `lg_repo_sync` 时执行：
 
-1. 对 Global 的 profile 目录和 lg 配置文件算哈希，与上次比对；变了就发 ISOLATION\_REPORT 并暂停工作
-2. 用 lg-scope 的规则自测：尝试读 Local 的工作目录、访问本机地址，都必须被拒
-3. 把频道里所有 from global 的消息与 Global 保存的发送副本逐字节比对，不一致就发 ISOLATION_REPORT
+1. **枚举工具白名单**：列出 Global 会话当前可见的全部工具，与配置的白名单（`read`、`read_image`、`write`、`edit`、`glob`、`grep`、`web_fetch`、`web_search`、`lg_*`、`present`）逐一比对。出现白名单以外的名字，就发 ISOLATION\_REPORT 并暂停工作。这是规则层内堵住“用户 patch 加回 bash”的主要手段——不看配置怎么写，只看会话实际能调到什么。
+2. **断言 preset**：`agent-preset-registry.default` 必须是 `lg-global`，且没有其他 preset 处于启用状态。
+3. **组合哈希**：对 `--dump-config` 的**解析结果**（不是 profile 文件）算哈希，与上次比对。文件没变而 bundle 版本变了，也要能发现。
+4. **负向自测**：用 lg-scope 的规则尝试读 Local 的工作目录、访问本机地址、对镜像 push，三者都必须失败。
+5. **副本比对**：把频道里所有 from global 的消息与 Global 自己保存的发送副本逐字节比对，不一致就发 ISOLATION\_REPORT。
 
 ## 隔离策略
 
 默认采用规则层隔离：不需要 root、容器或单独的系统用户，任何能跑 dsh 的用户都能用。系统级隔离保留为可选增强。
+
+这是 Human 明确拍板的默认：不为了隔离把用户挡在门外。因此“Global 与 Local 使用不同的 `DSH_HOME`”保留为**部署前提**（它不需要任何额外权限），而“独立系统用户或容器”只作为可选增强列出。
 
 **三层规则**
 
@@ -333,7 +348,7 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
 
 **两个方向的强度不对称，这是可以接受的**
 
-- 正向隔离（Global 看不到 Local）在规则层就很强。Global 没有 shell，它的每一次文件和网络访问都经过守卫，而守卫的拒绝无法被推翻。
+- 正向隔离（Global 看不到 Local）在规则层可以做到足够强，但**不能只靠“preset 里没有 shell”**：dsh 的进程 sandbox 不拦读取，用户 patch 又能改回带 bash 的 preset。强度来自三件事叠加——能力组合默认不含 shell、守卫拦住每一次文件与网络访问、lg-integrity 按会话实际可见的工具做白名单枚举。
 - 反向隔离（Local 改不了 Global）在规则层较弱。Local 有 bash，文本匹配挡不住刻意的间接写法。
 - 框架的核心性质只依赖正向隔离：Global 的判断不能建立在 Local 的转述上。Local 即使读到 Global 的会话记录，也只是看到了 Global 的想法，并不破坏这一点。
 - 反向的真正风险是 Local 篡改 Global 读到的东西。lg-integrity 负责发现：Global 每次同步都把镜像硬重置到远端，配置文件被改会被哈希比对发现。
@@ -411,14 +426,22 @@ Human 把任务交给 Local：中转模式下由 Local 用 `lg_record_relayed` �
       name: '@local-global/dsh-lg-global/scope'
       config:
         workspace: '~/.lg-global/workspace'
-        network: deny-private        # 或 allowlist
-        allowDomains: []
+        network: allowlist           # 默认值，只有 allowlist 一种模式
+        allowDomains:                # 默认表，可覆盖；见“lg-scope”一节
+          - github.com
+          - api.github.com
+          - raw.githubusercontent.com
+          - codeload.github.com
+          - objects.githubusercontent.com
+          - gist.github.com
+          - gist.githubusercontent.com
     - id: lg-repo
       name: '@local-global/dsh-lg-global/repo'
       config:
         remote: 'https://github.com/<owner>/<repo>.git'   # 或 file:///path/to/remote.git
         branch: main
-        tokenEnv: LG_REPO_READ_TOKEN
+        tokenEnv: LG_REPO_READ_TOKEN      # 只读凭据；pushurl 由插件置空
+        denyPush: true                    # 启动探针会实测 push 必须失败
     - id: lg-checkpoint
       name: '@local-global/dsh-lg-global/checkpoint'
       config:

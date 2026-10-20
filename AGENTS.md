@@ -23,6 +23,14 @@
 
 只有插件不可用时（未安装、未绑定、工具连续失败）才回退到手工方式：在频道仓库 messages/ 下新建 <序号>-local-<类型>.md，单独提交，提交信息 msg <序号> local <类型>，然后 push，并在下一条消息里说明这次为什么回退。
 
+## 频道仓库只追加
+
+任何情况下都不改写、不 force push 频道仓库：不 amend、不 rebase、不删消息文件、不改已提交的文件。
+
+抄错、发错、留错，一律发一条 `CORRECTION` 更正，历史保持原样。force push 属于 C 类动作，本条把它从“需要批准”降成“一律不做”。
+
+转交的消息必须走 `lg_record_relayed`：手工抄写这一步本身就不该存在，抄错是我已经犯过一次的错。
+
 ## 收到 Global 或 Human 的消息
 
 Human 粘贴给你、首行是 [LG ... from global] 或 [LG ... from human] 的消息：先调 `lg_record_relayed` 存档，`text` 参数就是全文，一个字节都不许改，工具存完再执行。
