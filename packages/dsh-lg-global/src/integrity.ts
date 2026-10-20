@@ -205,7 +205,10 @@ export function apply(ctx: Context, raw: RawIntegrityConfig): void {
     // The preset registry publishes its definitions asynchronously; checking in
     // the same tick would see an empty registry and pause for no reason.
     const timer = setTimeout(() => {
-      void checkRegistryAndComposition()
+      void checkRegistryAndComposition().then(() => {
+        const probes = [...results.values()]
+        if (probes.length > 0 && probes.every((entry) => entry.pass) && !lgState.paused) lgState.markVerified()
+      })
     }, 2000)
     return () => clearTimeout(timer)
   })
@@ -246,7 +249,9 @@ export function apply(ctx: Context, raw: RawIntegrityConfig): void {
     async execute() {
       await checkRegistryAndComposition()
       const probes = [...results.values()]
-      return { paused: lgState.paused, pass: !lgState.paused && probes.every((entry) => entry.pass), probes }
+      const clean = probes.length > 0 && probes.every((entry) => entry.pass) && !lgState.paused
+      if (clean) lgState.markVerified()
+      return { paused: lgState.paused, pass: clean, probes }
     },
   } as unknown as Parameters<Context['tools']['register']>[0])
 }

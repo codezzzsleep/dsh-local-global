@@ -170,9 +170,17 @@ describe('relative paths follow the session working directory', () => {
 })
 
 describe('GuardState', () => {
-  it('pauses on the first failure and resumes only when it clears', () => {
+  it('starts paused until integrity verifies the composition', () => {
     const state = new GuardState()
+    expect(state.paused).toBe(true)
+    expect(state.denial()).toContain('not-verified')
+    state.markVerified()
     expect(state.paused).toBe(false)
+  })
+
+  it('pauses again on a failure and clears only that failure', () => {
+    const state = new GuardState()
+    state.markVerified()
     state.pause('push-probe', 'writable')
     expect(state.paused).toBe(true)
     expect(state.denial()).toContain('push-probe')

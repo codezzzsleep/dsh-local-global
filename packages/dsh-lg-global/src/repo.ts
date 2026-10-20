@@ -63,6 +63,10 @@ export async function runGit(
       GIT_CONFIG_NOSYSTEM: '1',
       GIT_CONFIG_GLOBAL: '/dev/null',
       GIT_SSH_COMMAND: '/bin/false',
+      // No HOME: git would otherwise read $HOME/.netrc credentials that
+      // bypass credential.helper entirely.
+      HOME: '/nonexistent-lg-home',
+      XDG_CONFIG_HOME: '/nonexistent-lg-home',
       ...options.env,
     }
     const child = spawn('git', ['-c', 'protocol.file.allow=always', '-c', 'credential.helper=', ...args], {
@@ -113,8 +117,11 @@ export function resolveRepoConfig(raw: RawRepoConfig): RepoConfig {
   const base = typeof raw.workspace === 'string' ? resolvePath(raw.workspace) : process.cwd()
   const mirrorDir = raw.mirrorDir === undefined ? join(base, 'repo.git') : resolvePath(String(raw.mirrorDir))
   if (!isAbsolute(mirrorDir)) throw new TypeError('lg-repo: "mirrorDir" must be absolute')
-  if (raw.remote.startsWith('ssh://') || raw.remote.includes('@') && raw.remote.includes(':')) {
-    throw new TypeError('lg-repo: SSH remotes are refused — Global must use an anonymous read-only URL (https:// or file://)')
+  if (raw.remote.startsWith('ssh://') || (raw.remote.includes('@') && raw.remote.includes(':'))) {
+    throw new TypeError('lg-repo: SSH remotes are refused — Global must use an anonymous read-only URL')
+  }
+  if (!raw.remote.startsWith('https://')) {
+    throw new TypeError('lg-repo: M2 implements and accepts https remotes only; file:// hosting is still undecided')
   }
   return { remote: raw.remote, branch, mirrorDir }
 }

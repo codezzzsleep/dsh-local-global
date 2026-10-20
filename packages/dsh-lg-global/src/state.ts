@@ -15,7 +15,10 @@ export interface PauseReason {
 
 /** Process-wide pause state shared by every lg-global plugin. */
 export class GuardState {
-  private reasons: PauseReason[] = []
+  private verified = false
+  private reasons: PauseReason[] = [
+    { code: 'not-verified', detail: 'integrity has not reported a clean composition yet', at: new Date(0).toISOString() },
+  ]
 
   /** Record a failure; repeated codes replace their previous detail. */
   pause(code: string, detail: string): void {
@@ -30,9 +33,20 @@ export class GuardState {
     this.reasons = this.reasons.filter((reason) => reason.code !== code)
   }
 
-  /** True while any check is failing. */
+  /** True until integrity reports a clean composition, or while any check fails. */
   get paused(): boolean {
-    return this.reasons.length > 0
+    return !this.verified || this.reasons.length > 0
+  }
+
+  /** Mark the composition verified; only integrity calls this, and only on a clean run. */
+  markVerified(): void {
+    this.verified = true
+    this.reasons = this.reasons.filter((reason) => reason.code !== 'not-verified')
+  }
+
+  /** Drop the verified mark so the next failed check pauses again. */
+  invalidate(): void {
+    this.verified = false
   }
 
   /** First reason, used in the denial message. */
