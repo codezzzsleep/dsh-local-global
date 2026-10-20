@@ -1,0 +1,56 @@
+$ node --version
+v24.22.0
+$ pnpm --version
+11.28.5
+$ dsh --version
+0.2.1-rc.2
+
+$ pnpm -r test
+Scope: 2 of 3 workspace projects
+Scope: all 3 workspace projects
+✓ Lockfile passes supply-chain policies (verified 10m ago)
+Lockfile is up to date, resolution step is skipped
+Already up to date
+
+[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: esbuild@0.28.2
+
+Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.
+[WARN] The install that runs before scripts failed, so your node_modules may be out of sync with your lockfile. Set "verifyDepsBeforeRun: false" to skip this install.
+$ vitest run
+
+ RUN  v3.2.7 /var/lib/deepseek-harness/GlobalAndLocalAgent/dsh-local-global/packages/lg-protocol
+
+ ✓ test/format.test.ts (12 tests) 23ms
+ ✓ test/fold.test.ts (14 tests) 24ms
+ ✓ test/validate.test.ts (30 tests) 48ms
+ ✓ test/seq.test.ts (7 tests) 5ms
+
+ Test Files  4 passed (4)
+      Tests  63 passed (63)
+   Start at  01:21:20
+   Duration  623ms (transform 140ms, setup 0ms, collect 462ms, tests 100ms, environment 1ms, prepare 265ms)
+
+$ vitest run
+
+ RUN  v3.2.7 /var/lib/deepseek-harness/GlobalAndLocalAgent/dsh-local-global/packages/dsh-lg-common
+
+ ✓ test/git-channel.test.ts (5 tests) 492ms
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  01:21:22
+   Duration  824ms (transform 84ms, setup 0ms, collect 118ms, tests 492ms, environment 0ms, prepare 65ms)
+
+
+## 负测与测试要求的对应（AC-2）
+
+| 0005 测试要求 | 用例 |
+|---|---|
+| 1 首行格式错误被拒 | `test/fixtures.ts` › parseMessage › rejects a first line that does not match the header grammar |
+| 2 文件名发送者或类型与首行不一致被拒 | `test/fixtures.ts` › rejects a file whose sender disagrees with its first line / whose type disagrees |
+| 3 每种类型至少一个缺必填字段被拒 | `test/validate.test.ts` › validateMessage — required fields › 12 个类型各一条（逐字段删） |
+| 4 角色越权：local 发 DIRECTIVE、global 发 REPORT | `test/validate.test.ts` › sender authority › 两条 + global 发 TASK + CLAIM 双方合法 |
+| 5 序号跳号或重复被识别 | `test/seq.test.ts` › findSeqAnomalies › reports a gap / reports a duplicate |
+| 6 DECISION 回答后 QUESTION 不再未关闭 | `test/fold.test.ts` › open questions › lists a QUESTION until a DECISION answers it |
+| 7 批准登记进 consumed_approvals 后不可再用 | `test/fold.test.ts` › approvals › drops the approval once a REPORT registers it |
+| 额外：真实 git 并发写入 | `test/git-channel.test.ts` › lets two independent writers push concurrently without a lost or duplicate sequence |
