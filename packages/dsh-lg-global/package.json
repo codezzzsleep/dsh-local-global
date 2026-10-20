@@ -17,6 +17,10 @@
       "types": "./lib/integrity.d.ts",
       "default": "./lib/integrity.js"
     },
+    "./role": {
+      "types": "./lib/role.d.ts",
+      "default": "./lib/role.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -45,13 +49,15 @@
     "@deepseek-ai/dsh-agent": ">=0.2.1-rc.2 <0.3.0",
     "@deepseek-ai/dsh-agent-preset-registry": ">=0.2.1-rc.2 <0.3.0",
     "@deepseek-ai/dsh-session": ">=0.2.1-rc.2 <0.3.0",
-    "@deepseek-ai/dsh-tools": ">=0.2.1-rc.2 <0.3.0"
+    "@deepseek-ai/dsh-tools": ">=0.2.1-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-system-prompt": ">=0.2.1-rc.2 <0.3.0"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "~4.0.5",
     "@deepseek-ai/dsh-agent": ">=0.2.1-rc.2 <0.3.0",
     "@deepseek-ai/dsh-agent-preset-registry": ">=0.2.1-rc.2 <0.3.0",
     "@deepseek-ai/dsh-session": ">=0.2.1-rc.2 <0.3.0",
-    "@deepseek-ai/dsh-tools": ">=0.2.1-rc.2 <0.3.0"
+    "@deepseek-ai/dsh-tools": ">=0.2.1-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-system-prompt": ">=0.2.1-rc.2 <0.3.0"
   }
 }

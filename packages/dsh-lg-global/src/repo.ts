@@ -7,9 +7,13 @@
  * with beyond the refs a resync rewrites.
  */
 import { spawn } from 'node:child_process'
+import { mkdtempSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { isAbsolute, join, resolve as resolvePath } from 'node:path'
+import { tmpdir } from 'node:os'
+import { lgState } from './state.js'
 import type { Context } from '@deepseek-ai/cordis'
 // Module augmentation only: `ctx.tools` and the tools/* events live in dsh-tools.
 import type {} from '@deepseek-ai/dsh-tools'
@@ -21,8 +25,6 @@ export interface RepoConfig {
   readonly branch: string
   /** Bare mirror directory. */
   readonly mirrorDir: string
-  /** Optional SSH key the mirror must use; keeps the harness key out of reach. */
-  readonly sshKeyPath?: string
 }
 
 /** Raw plugin config. */
@@ -31,7 +33,6 @@ export interface RawRepoConfig {
   readonly branch?: unknown
   readonly mirrorDir?: unknown
   readonly workspace?: unknown
-  readonly sshKeyPath?: unknown
 }
 
 /** One git invocation result. */
@@ -52,9 +53,21 @@ export async function runGit(
   options: { cwd?: string; input?: string; env?: Readonly<Record<string, string>> } = {},
 ): Promise<GitResult> {
   return await new Promise<GitResult>((resolve, reject) => {
-    const child = spawn('git', ['-c', 'protocol.file.allow=always', ...args], {
+    // A curated environment: inheriting process.env would hand Global the same
+    // SSH keys, ssh-agent, and credential helper that Local pushes with.
+    const env: Record<string, string> = {
+      PATH: process.env['PATH'] ?? '/usr/bin:/bin',
+      LANG: process.env['LANG'] ?? 'C',
+      GIT_TERMINAL_PROMPT: '0',
+      GIT_ASKPASS: '/bin/false',
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_SSH_COMMAND: '/bin/false',
+      ...options.env,
+    }
+    const child = spawn('git', ['-c', 'protocol.file.allow=always', '-c', 'credential.helper=', ...args], {
       cwd: options.cwd,
-      env: { ...process.env, ...options.env, GIT_TERMINAL_PROMPT: '0' },
+      env,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     let stdout = ''
@@ -91,8 +104,10 @@ export function resolveRepoConfig(raw: RawRepoConfig): RepoConfig {
   const base = typeof raw.workspace === 'string' ? resolvePath(raw.workspace) : process.cwd()
   const mirrorDir = raw.mirrorDir === undefined ? join(base, 'repo.git') : resolvePath(String(raw.mirrorDir))
   if (!isAbsolute(mirrorDir)) throw new TypeError('lg-repo: "mirrorDir" must be absolute')
-  const sshKeyPath = raw.sshKeyPath === undefined ? undefined : resolvePath(String(raw.sshKeyPath))
-  return { remote: raw.remote, branch, mirrorDir, ...(sshKeyPath === undefined ? {} : { sshKeyPath }) }
+  if (raw.remote.startsWith('ssh://') || raw.remote.includes('@') && raw.remote.includes(':')) {
+    throw new TypeError('lg-repo: SSH remotes are refused — Global must use an anonymous read-only URL (https:// or file://)')
+  }
+  return { remote: raw.remote, branch, mirrorDir }
 }
 
 /** Outcome of the write-capability probe. */
@@ -123,9 +138,22 @@ const PERMISSION_MARKERS = [
  * @param cwd - an existing repository to run git in (the mirror).
  * @returns the verdict and the original git output.
  */
-export async function probePushDenied(config: RepoConfig, cwd: string): Promise<PushProbe> {
+export async function probePushDenied(config: RepoConfig): Promise<PushProbe> {
+  // A scratch repository with one commit: the probe must not depend on the
+  // mirror having a HEAD, or the first boot can only produce `inconclusive`.
+  const scratch = mkdtempSync(join(tmpdir(), 'lg-push-probe-'))
+  const identity = {
+    GIT_AUTHOR_NAME: 'lg-probe',
+    GIT_AUTHOR_EMAIL: 'lg-probe@invalid',
+    GIT_COMMITTER_NAME: 'lg-probe',
+    GIT_COMMITTER_EMAIL: 'lg-probe@invalid',
+  }
   try {
-    const result = await runGit(['push', '--dry-run', config.remote, `HEAD:refs/heads/${config.branch}`], { cwd })
+    await runGit(['init', '--quiet', '--initial-branch', config.branch, scratch], { env: identity })
+    const tree = (await runGit(['mktree'], { cwd: scratch, input: '', env: identity })).stdout.trim()
+    const commit = (await runGit(['commit-tree', tree, '-m', 'probe'], { cwd: scratch, env: identity })).stdout.trim()
+    await runGit(['update-ref', `refs/heads/${config.branch}`, commit], { cwd: scratch, env: identity })
+    const result = await runGit(['push', '--dry-run', config.remote, `HEAD:refs/heads/${config.branch}`], { cwd: scratch })
     return { verdict: 'writable', exitCode: 0, detail: `${result.stdout}${result.stderr}`.trim() }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -135,6 +163,8 @@ export async function probePushDenied(config: RepoConfig, cwd: string): Promise<
       exitCode: null,
       detail: message,
     }
+  } finally {
+    await rm(scratch, { recursive: true, force: true })
   }
 }
 
@@ -160,10 +190,6 @@ export class RepoMirror {
     // under an earlier configuration.
     await runGit(['remote', 'set-url', 'origin', this.config.remote], { cwd: this.config.mirrorDir }).catch(() => {})
     await runGit(['remote', 'set-url', '--push', 'origin', 'file:///dev/null'], { cwd: this.config.mirrorDir }).catch(() => {})
-    if (this.config.sshKeyPath !== undefined) {
-      const ssh = `ssh -i ${this.config.sshKeyPath} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new`
-      await runGit(['config', 'core.sshCommand', ssh], { cwd: this.config.mirrorDir })
-    }
   }
 
   /** Fetch the remote branch and hard-reset the local ref to it. */
@@ -231,11 +257,12 @@ export function apply(ctx: Context, raw: RawRepoConfig): void {
     void (async () => {
       try {
         await mirror.ensure()
-        const probe = await probePushDenied(config, config.mirrorDir)
-        if (probe.verdict === 'writable') {
-          ctx.logger?.('lg-repo')?.error?.(`lg-repo: credentials CAN write to ${config.remote}; refusing to serve reads`)
-        } else if (probe.verdict === 'inconclusive') {
-          ctx.logger?.('lg-repo')?.warn?.(`lg-repo: push probe inconclusive: ${probe.detail}`)
+        const probe = await probePushDenied(config)
+        if (probe.verdict !== 'denied') {
+          lgState.pause('push-probe', `${probe.verdict}: ${probe.detail}`)
+          ctx.logger?.('lg-repo')?.error?.(`lg-repo: push probe ${probe.verdict} — Global paused: ${probe.detail.slice(0, 200)}`)
+        } else {
+          lgState.resume('push-probe')
         }
         if (!disposed) ctx.logger?.('lg-repo')?.info?.(`lg-repo: push probe ${probe.verdict}`)
       } catch (error) {

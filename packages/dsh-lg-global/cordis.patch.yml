@@ -15,11 +15,13 @@
             name: '@deepseek-ai/dsh-persona'
             config:
               prefix: 'You are Global, the judge in a Local-Global pair, powered by {{model}}.'
-          - id: agent-instructions
-            name: '@deepseek-ai/dsh-agent-instructions'
+          # agent-instructions is deliberately absent: it would load files Local
+          # can write ($DSH_AGENTS_HOME/AGENTS.md, directory walks after
+          # read/write/edit, AGENTS.local.md). lg-role reads one role file only.
+          - id: lg-role
+            name: '@local-global/dsh-lg-global/role'
             config:
-              maxBytes: 65536
-              instructionFileCandidates: ['LG-ROLE.md']
+              roleFile: 'LG-ROLE.md'
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
             config:

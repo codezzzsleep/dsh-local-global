@@ -1,24 +1,29 @@
 /**
  * `lg-integrity` — Global's self-check.
  *
- * The preset alone cannot guarantee isolation: a user patch layer sits above
- * the bundle and can point the default preset back at `standard`. This plugin
- * asserts the *effective* composition and refuses to work when it is wrong.
+ * Every failure pauses the whole Global side through {@link lgState}; the guard
+ * in lg-scope then denies every tool except `lg_integrity_check`. Throwing here
+ * would only keep this plugin from loading — dsh logs a warning and serves the
+ * Web UI anyway — so startup failures pause instead of throwing.
  */
 import type { Context } from '@deepseek-ai/cordis'
 // Module augmentations only: ctx.tools, agent/* events, and ctx.agentPresets.
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
+import { isInside, sessionCwd } from './scope.js'
+import { lgState } from './state.js'
 
 /** Fully resolved integrity configuration. */
 export interface IntegrityConfig {
-  /** Preset id the session must resolve to. */
+  /** Preset id the registry must contain and nothing else. */
   readonly expectedPreset: string
-  /** Profile names must start with this prefix; otherwise lg-global is misplaced. */
+  /** Profile names must start with this prefix. */
   readonly profilePrefix: string
   /** Tool names a Global session may see. */
   readonly allowedTools: readonly string[]
+  /** Session working directory must equal this workspace. */
+  readonly workspace: string
 }
 
 /** Raw plugin config. */
@@ -26,6 +31,7 @@ export interface RawIntegrityConfig {
   readonly expectedPreset?: unknown
   readonly profilePrefix?: unknown
   readonly allowedTools?: unknown
+  readonly workspace?: unknown
 }
 
 /** Default tool whitelist (docs/implementation.md, lg-integrity step 1). */
@@ -50,11 +56,16 @@ export const DEFAULT_ALLOWED_TOOLS = [
  * Validate raw config and fill defaults.
  * @param raw - composition config.
  * @returns the resolved configuration.
+ * @throws TypeError when the workspace is missing.
  */
 export function resolveIntegrityConfig(raw: RawIntegrityConfig): IntegrityConfig {
+  if (typeof raw.workspace !== 'string' || raw.workspace.length === 0) {
+    throw new TypeError('lg-integrity: "workspace" is required')
+  }
   return {
     expectedPreset: raw.expectedPreset === undefined ? 'lg-global' : String(raw.expectedPreset),
     profilePrefix: raw.profilePrefix === undefined ? 'lg-global' : String(raw.profilePrefix),
+    workspace: String(raw.workspace),
     allowedTools:
       Array.isArray(raw.allowedTools) && raw.allowedTools.length > 0
         ? raw.allowedTools.map((value) => String(value))
@@ -70,21 +81,39 @@ export interface ProbeResult {
 }
 
 /**
- * Check that the effective preset is the expected one.
+ * Assert the registry holds exactly the expected preset and nothing else.
  *
- * Reads `defaultId` on purpose: `selectedDefault` is a user-level override that
- * wins over the deployment `default`, so comparing the config field alone would
- * miss the bypass.
- * @param registry - the live preset registry.
- * @param expected - preset id the session must resolve to.
+ * `defaultId` alone is not enough: the UI can call the remote `select` before a
+ * session's first turn, and `selectedDefault` is UI-written too.
+ * @param presets - every declared preset, including broken ones.
+ * @param expected - the only id allowed.
  * @returns one probe result.
  */
-export function checkPreset(registry: { defaultId: string; list?: () => Promise<{ id: string; broken?: string }[]> }, expected: string): ProbeResult {
-  const actual = registry.defaultId
+export function checkRegistry(presets: readonly { id: string; broken?: string }[], expected: string): ProbeResult {
+  const ids = presets.map((preset) => preset.id)
+  const broken = presets.filter((preset) => preset.broken !== undefined)
+  if (ids.length !== 1 || ids[0] !== expected) {
+    return { name: 'preset-registry', pass: false, detail: `registry must hold only ${expected}, got: ${ids.join(', ') || '(none)'}` }
+  }
+  if (broken.length > 0) {
+    return { name: 'preset-registry', pass: false, detail: `broken presets: ${broken.map((p) => `${p.id}: ${String(p.broken)}`).join('; ')}` }
+  }
+  return { name: 'preset-registry', pass: true, detail: `${expected} only` }
+}
+
+/**
+ * Check a session's working directory against the workspace.
+ * @param cwd - session working directory.
+ * @param workspace - the Global workspace.
+ * @returns one probe result.
+ */
+export function checkCwd(cwd: string | undefined, workspace: string): ProbeResult {
+  if (cwd === undefined) return { name: 'session-cwd', pass: false, detail: 'session working directory is unknown' }
+  const inside = isInside(workspace, cwd)
   return {
-    name: 'preset-default',
-    pass: actual === expected,
-    detail: `defaultId=${actual} expected=${expected}`,
+    name: 'session-cwd',
+    pass: inside,
+    detail: `${cwd} ${inside ? 'is inside' : 'is outside'} ${workspace}`,
   }
 }
 
@@ -125,38 +154,38 @@ export const inject = ['tools', 'agentPresets']
  */
 export function apply(ctx: Context, raw: RawIntegrityConfig): void {
   const config = resolveIntegrityConfig(raw)
-
-  const profile = profileName(ctx)
-  if (profile !== undefined && !profile.startsWith(config.profilePrefix)) {
-    throw new Error(
-      `lg-integrity: this profile is named "${profile}", but lg-global may only run in a profile starting with "${config.profilePrefix}"`,
-    )
-  }
-
-  const preset = checkPreset(ctx.agentPresets as unknown as { defaultId: string }, config.expectedPreset)
-  if (!preset.pass) {
-    throw new Error(`lg-integrity: refusing to work — ${preset.detail}`)
-  }
-
-  const results: ProbeResult[] = [preset]
-  if (profile === undefined) {
-    results.push({ name: 'profile-name', pass: false, detail: 'profileContext service unavailable; cannot prove the profile name' })
-  } else {
-    results.push({ name: 'profile-name', pass: true, detail: profile })
-  }
+  const results = new Map<string, ProbeResult>()
 
   const remember = (result: ProbeResult): void => {
-    const index = results.findIndex((entry) => entry.name === result.name)
-    if (index === -1) results.push(result)
-    else results[index] = result
-    if (!result.pass) ctx.logger?.('lg-integrity')?.error?.(`lg-integrity: ${result.name} failed — ${result.detail}`)
+    results.set(result.name, result)
+    if (result.pass) {
+      lgState.resume(result.name)
+      return
+    }
+    lgState.pause(result.name, result.detail)
+    ctx.logger?.('lg-integrity')?.error?.(`lg-integrity: ${result.name} failed — ${result.detail}`)
   }
 
-  ctx.on('agent/created', () => {
-    // The preset's rows live in an isolated scope: `agent.ctx.tools` resolves to
-    // the host realm and sees only process-level tools. `acquireScope` returns
-    // the ScopeKey whose view includes the preset's own rows, which is the set a
-    // model in that session can actually call.
+  const checkRegistryAndComposition = async (): Promise<void> => {
+    const profile = profileName(ctx)
+    remember({ name: 'profile-name', pass: profile !== undefined && profile.startsWith(config.profilePrefix), detail: profile ?? 'profileContext unavailable' })
+    try {
+      const presets = await ctx.agentPresets.list()
+      remember(checkRegistry(presets, config.expectedPreset))
+      const compositions = ctx.agentPresets.inspectCompositions()
+      const matching = compositions.filter((entry) => (entry as { id?: string }).id === config.expectedPreset)
+      remember({
+        name: 'preset-composition',
+        pass: matching.length > 0,
+        detail: `${String(compositions.length)} activated, ${String(matching.length)} named ${config.expectedPreset}`,
+      })
+    } catch (error) {
+      remember({ name: 'preset-registry', pass: false, detail: error instanceof Error ? error.message : String(error) })
+    }
+  }
+
+  const checkAgent = (agent: unknown): void => {
+    remember(checkCwd(sessionCwd(agent), config.workspace))
     void (async () => {
       try {
         const lease = await ctx.agentPresets.acquireScope(config.expectedPreset)
@@ -170,28 +199,54 @@ export function apply(ctx: Context, raw: RawIntegrityConfig): void {
         remember({ name: 'tool-whitelist', pass: false, detail: error instanceof Error ? error.message : String(error) })
       }
     })()
+  }
+
+  ctx.effect(() => {
+    // The preset registry publishes its definitions asynchronously; checking in
+    // the same tick would see an empty registry and pause for no reason.
+    const timer = setTimeout(() => {
+      void checkRegistryAndComposition()
+    }, 2000)
+    return () => clearTimeout(timer)
+  })
+
+  ctx.on('agent/created', (payload: { agent?: unknown }) => {
+    checkAgent(payload.agent)
     return undefined
   })
 
   ctx.tools.register({
     name: 'lg_integrity_check',
-    description: 'Report the integrity probes: preset default, profile name, and per-session tool whitelist.',
+    description: 'Report the integrity probes and whether Global is paused.',
     parameters: { type: 'object', properties: {} },
     output: {
       schema: {
         type: 'object',
         properties: {
+          paused: { type: 'boolean' },
           pass: { type: 'boolean' },
-          probes: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, pass: { type: 'boolean' }, detail: { type: 'string' } }, required: ['name', 'pass', 'detail'] } },
+          probes: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { name: { type: 'string' }, pass: { type: 'boolean' }, detail: { type: 'string' } },
+              required: ['name', 'pass', 'detail'],
+            },
+          },
         },
-        required: ['pass', 'probes'],
+        required: ['paused', 'pass', 'probes'],
       },
-      render: (_args: unknown, value: { pass: boolean; probes: ProbeResult[] }) => [
-        { type: 'text' as const, text: `${value.pass ? 'PASS' : 'FAIL'}\n${value.probes.map((p) => `${p.pass ? 'ok' : 'FAIL'} ${p.name}: ${p.detail}`).join('\n')}` },
+      render: (_args: unknown, value: { paused: boolean; pass: boolean; probes: ProbeResult[] }) => [
+        {
+          type: 'text' as const,
+          text: `${value.paused ? 'PAUSED' : value.pass ? 'PASS' : 'FAIL'}\n${value.probes.map((p) => `${p.pass ? 'ok' : 'FAIL'} ${p.name}: ${p.detail}`).join('\n')}`,
+        },
       ],
     },
     async execute() {
-      return { pass: results.every((entry) => entry.pass), probes: results }
+      await checkRegistryAndComposition()
+      const probes = [...results.values()]
+      return { paused: lgState.paused, pass: !lgState.paused && probes.every((entry) => entry.pass), probes }
     },
   } as unknown as Parameters<Context['tools']['register']>[0])
 }

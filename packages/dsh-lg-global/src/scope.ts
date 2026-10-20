@@ -1,9 +1,14 @@
 /**
  * `lg-scope` — what a Global session may touch.
  *
- * Two enforcement points, because they have different strengths:
- * - `ctx.tools.guard` is synchronous and monotonic, so it owns path checks.
- * - `tools/pre-execute` is a waterfall and may await, so it owns DNS checks.
+ * Two enforcement points, chosen by what each can actually guarantee:
+ * - `ctx.tools.guard` is synchronous, monotonic, and runs after the
+ *   `tools/pre-execute` waterfall, so **every denial happens here**. A
+ *   pre-execute listener can be prepended and return `allow` without calling
+ *   `next()`, which skips later listeners entirely — so pre-execute may only
+ *   prepare, never decide.
+ * - `tools/pre-execute` does the async part (DNS); the guard reads its verdict
+ *   and fails closed when the verdict is missing or bound to another URL.
  */
 import { existsSync, realpathSync, statSync } from 'node:fs'
 import { lookup } from 'node:dns/promises'
@@ -12,16 +17,20 @@ import { basename, dirname, isAbsolute, resolve as resolvePath, sep } from 'node
 import type { Context } from '@deepseek-ai/cordis'
 // Module augmentation only: `ctx.tools` and the tools/* events live in dsh-tools.
 import type {} from '@deepseek-ai/dsh-tools'
+import { lgState } from './state.js'
 
 /** Tools that read or write through a path argument. */
 export const PATH_TOOLS = ['read', 'read_image', 'write', 'edit', 'glob', 'grep', 'working_directory'] as const
+
+/** Tools whose missing path means "the session working directory". */
+export const CWD_DEFAULT_TOOLS = ['glob', 'grep'] as const
 
 /** Tool-name prefixes a Global session must never see, whatever the preset says. */
 export const DENIED_TOOL_PREFIXES = ['bash', 'pwsh', 'terminal', 'job_', 'subagent', 'task'] as const
 
 /** Fully resolved scope configuration. */
 export interface ScopeConfig {
-  /** Absolute Global workspace; every path argument must land inside it. */
+  /** Absolute Global workspace; every resolved path must land inside it. */
   readonly workspace: string
   /** Hosts `web_fetch` may reach, matched exactly or as a subdomain. */
   readonly allowDomains: readonly string[]
@@ -46,6 +55,13 @@ export const DEFAULT_ALLOW_DOMAINS = [
   'gist.github.com',
   'gist.githubusercontent.com',
 ] as const
+
+/** A decision recorded by the async pre-execute stage. */
+export interface NetworkVerdict {
+  readonly url: string
+  readonly allow: boolean
+  readonly reason?: string
+}
 
 /**
  * Validate raw config and fill defaults.
@@ -133,16 +149,32 @@ export function pathArgument(args: unknown): string | undefined {
   return undefined
 }
 
-/** Decide one path argument; returns a denial reason or undefined. */
-export function checkPath(config: ScopeConfig, tool: string, rawPath: string): string | undefined {
-  const absolute = isAbsolute(rawPath) ? rawPath : resolvePath(config.workspace, rawPath)
+/**
+ * Decide one path argument the way the tool itself will resolve it.
+ *
+ * Relative paths are resolved against the **session working directory**, not
+ * the workspace: `dsh-tool-fs` resolves them that way, and a guard using a
+ * different base would approve a path that the tool then reads elsewhere.
+ * @param config - scope configuration.
+ * @param tool - tool name.
+ * @param rawPath - the argument, or undefined when the tool defaults to cwd.
+ * @param cwd - session working directory.
+ * @returns a denial reason, or undefined to allow.
+ */
+export function checkPath(config: ScopeConfig, tool: string, rawPath: string | undefined, cwd: string | undefined): string | undefined {
+  if (cwd === undefined) return `lg-scope: ${tool} needs the session working directory, which is unknown`
+  if (!isInside(config.workspace, cwd)) {
+    return `lg-scope: session working directory is outside the Global workspace: ${cwd}`
+  }
+  const target = rawPath === undefined ? cwd : rawPath
+  const absolute = isAbsolute(target) ? target : resolvePath(cwd, target)
   if (!isInside(config.workspace, absolute)) {
-    return `lg-scope: ${tool} path escapes the Global workspace: ${rawPath}`
+    return `lg-scope: ${tool} path escapes the Global workspace: ${target}`
   }
   if (tool === 'write' || tool === 'edit') {
     const allowed = config.writeRoots.some((root) => isInside(root, absolute))
     if (!allowed) {
-      return `lg-scope: ${tool} may only write inside ${config.writeRoots.join(', ')}: ${rawPath}`
+      return `lg-scope: ${tool} may only write inside ${config.writeRoots.join(', ')}: ${target}`
     }
   }
   return undefined
@@ -178,6 +210,27 @@ export async function checkFetchTarget(config: ScopeConfig, url: string): Promis
   return undefined
 }
 
+/** Read the session working directory from an agent, when the shape allows it. */
+export function sessionCwd(agent: unknown): string | undefined {
+  const session = (agent as { session?: Record<string, unknown> } | undefined)?.session
+  if (session === undefined) return undefined
+  // `session.header.cwd` is the durable creation metadata (dsh-session:135).
+  const header = session['header'] as Record<string, unknown> | undefined
+  for (const candidate of [header?.['cwd'], session['cwd'], (session['meta'] as Record<string, unknown> | undefined)?.['cwd']]) {
+    if (typeof candidate === 'string' && isAbsolute(candidate)) return candidate
+  }
+  return undefined
+}
+
+/** Exposed for tests: whether a path is a directory that exists. */
+export function isExistingDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory()
+  } catch {
+    return false
+  }
+}
+
 /** Cordis plugin name. */
 export const name = 'lg-scope'
 
@@ -191,41 +244,44 @@ export const inject = ['tools']
  */
 export function apply(ctx: Context, raw: RawScopeConfig): void {
   const config = resolveScopeConfig(raw)
+  const verdicts = new Map<string, NetworkVerdict>()
+
+  ctx.on('tools/pre-execute', async (exec, next) => {
+    if (exec.name === 'web_fetch') {
+      const args = exec.arguments
+      const url = typeof args === 'object' && args !== null ? (args as Record<string, unknown>)['url'] : undefined
+      if (typeof url === 'string') {
+        const reason = await checkFetchTarget(config, url)
+        verdicts.set(exec.callId, reason === undefined ? { url, allow: true } : { url, allow: false, reason })
+      }
+    }
+    return await next()
+  })
 
   ctx.tools.guard((exec) => {
+    if (lgState.paused && exec.name !== 'lg_integrity_check') return lgState.denial()
+
     const toolName = exec.name
     for (const prefix of DENIED_TOOL_PREFIXES) {
       if (toolName === prefix || toolName.startsWith(prefix)) {
         return `lg-scope: ${toolName} is an execution or derivation tool and is not available to Global`
       }
     }
+
+    if (toolName === 'web_fetch') {
+      const args = exec.arguments
+      const url = typeof args === 'object' && args !== null ? (args as Record<string, unknown>)['url'] : undefined
+      const verdict = verdicts.get(exec.callId)
+      verdicts.delete(exec.callId)
+      if (typeof url !== 'string') return 'lg-scope: web_fetch without a url'
+      if (verdict === undefined) return 'lg-scope: no network verdict for this call'
+      if (verdict.url !== url) return `lg-scope: network verdict does not match the requested url: ${url}`
+      return verdict.allow ? undefined : (verdict.reason ?? 'lg-scope: web_fetch denied')
+    }
+
     if (!(PATH_TOOLS as readonly string[]).includes(toolName)) return undefined
     const target = pathArgument(exec.arguments)
-    if (target === undefined) return undefined
-    return checkPath(config, toolName, target)
+    if (target === undefined && !(CWD_DEFAULT_TOOLS as readonly string[]).includes(toolName)) return undefined
+    return checkPath(config, toolName, target, sessionCwd(exec.agent))
   })
-
-  ctx.on('tools/pre-execute', async (exec, next) => {
-    if (exec.name !== 'web_fetch') return await next()
-    const args = exec.arguments
-    const url = typeof args === 'object' && args !== null ? (args as Record<string, unknown>)['url'] : undefined
-    if (typeof url !== 'string') return { kind: 'deny' as const, reason: 'lg-scope: web_fetch without a url' }
-    const reason = await checkFetchTarget(config, url)
-    if (reason !== undefined) return { kind: 'deny' as const, reason }
-    return await next()
-  })
-}
-
-/** Exposed for the acceptance harness: the effective configuration. */
-export function scopeConfigOf(raw: RawScopeConfig): ScopeConfig {
-  return resolveScopeConfig(raw)
-}
-
-/** Exposed for tests: whether a path is a directory that exists. */
-export function isExistingDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory()
-  } catch {
-    return false
-  }
 }

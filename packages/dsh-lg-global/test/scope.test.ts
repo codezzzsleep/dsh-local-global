@@ -10,7 +10,8 @@ import {
   isPrivateAddress,
   resolveScopeConfig,
 } from '../src/scope.js'
-import { checkPreset, checkTools, resolveIntegrityConfig, DEFAULT_ALLOWED_TOOLS } from '../src/integrity.js'
+import { checkCwd, checkRegistry, checkTools, resolveIntegrityConfig, DEFAULT_ALLOWED_TOOLS } from '../src/integrity.js'
+import { GuardState } from '../src/state.js'
 
 const root = mkdtempSync(join(tmpdir(), 'lg-scope-test-'))
 const workspace = join(root, 'workspace')
@@ -78,25 +79,25 @@ describe('isInside', () => {
 
 describe('checkPath', () => {
   it('denies a path outside the workspace', () => {
-    expect(checkPath(config, 'read', join(outside, 'secret.txt'))).toContain('escapes the Global workspace')
+    expect(checkPath(config, 'read', join(outside, 'secret.txt'), workspace)).toContain('escapes the Global workspace')
   })
 
   it('denies a .. escape', () => {
-    expect(checkPath(config, 'read', '../outside/secret.txt')).toContain('escapes the Global workspace')
+    expect(checkPath(config, 'read', '../outside/secret.txt', workspace)).toContain('escapes the Global workspace')
   })
 
   it('denies a symlink that leaves the workspace', () => {
-    expect(checkPath(config, 'read', join(workspace, 'escape-link', 'secret.txt'))).toContain('escapes the Global workspace')
+    expect(checkPath(config, 'read', join(workspace, 'escape-link', 'secret.txt'), workspace)).toContain('escapes the Global workspace')
   })
 
   it('allows a symlink that stays inside', () => {
-    expect(checkPath(config, 'read', join(workspace, 'inside-link', 'note.txt'))).toBeUndefined()
+    expect(checkPath(config, 'read', join(workspace, 'inside-link', 'note.txt'), workspace)).toBeUndefined()
   })
 
   it('allows reads inside and restricts writes to drafts', () => {
-    expect(checkPath(config, 'read', 'drafts/note.txt')).toBeUndefined()
-    expect(checkPath(config, 'write', 'drafts/new.txt')).toBeUndefined()
-    expect(checkPath(config, 'write', 'outside-drafts.txt')).toContain('may only write inside')
+    expect(checkPath(config, 'read', 'drafts/note.txt', workspace)).toBeUndefined()
+    expect(checkPath(config, 'write', 'drafts/new.txt', workspace)).toBeUndefined()
+    expect(checkPath(config, 'write', 'outside-drafts.txt', workspace)).toContain('may only write inside')
   })
 })
 
@@ -120,11 +121,19 @@ describe('checkFetchTarget', () => {
 })
 
 describe('integrity checks', () => {
-  it('accepts the expected preset and reports the mismatch otherwise', () => {
-    expect(checkPreset({ defaultId: 'lg-global' }, 'lg-global').pass).toBe(true)
-    const failed = checkPreset({ defaultId: 'standard' }, 'lg-global')
-    expect(failed.pass).toBe(false)
-    expect(failed.detail).toContain('defaultId=standard')
+  it('accepts a registry holding exactly the expected preset', () => {
+    expect(checkRegistry([{ id: 'lg-global' }], 'lg-global').pass).toBe(true)
+    const extra = checkRegistry([{ id: 'lg-global' }, { id: 'standard' }], 'lg-global')
+    expect(extra.pass).toBe(false)
+    expect(extra.detail).toContain('standard')
+    const broken = checkRegistry([{ id: 'lg-global', broken: 'boom' }], 'lg-global')
+    expect(broken.pass).toBe(false)
+  })
+
+  it('requires the session working directory to sit inside the workspace', () => {
+    expect(checkCwd(workspace, workspace).pass).toBe(true)
+    expect(checkCwd(outside, workspace).pass).toBe(false)
+    expect(checkCwd(undefined, workspace).pass).toBe(false)
   })
 
   it('flags a tool outside the whitelist', () => {
@@ -135,9 +144,39 @@ describe('integrity checks', () => {
   })
 
   it('defaults to the documented preset and profile prefix', () => {
-    const resolved = resolveIntegrityConfig({})
+    const resolved = resolveIntegrityConfig({ workspace })
     expect(resolved.expectedPreset).toBe('lg-global')
     expect(resolved.profilePrefix).toBe('lg-global')
     expect(resolved.allowedTools).not.toContain('present')
+  })
+})
+
+describe('relative paths follow the session working directory', () => {
+  it('denies a relative path that escapes through a foreign cwd', () => {
+    expect(checkPath(config, 'read', 'secret.txt', outside)).toContain('outside the Global workspace')
+  })
+
+  it('denies a glob with no path when the cwd is outside the workspace', () => {
+    expect(checkPath(config, 'glob', undefined, outside)).toContain('outside the Global workspace')
+  })
+
+  it('checks a glob with no path against the cwd when the cwd is inside', () => {
+    expect(checkPath(config, 'glob', undefined, join(workspace, 'drafts'))).toBeUndefined()
+  })
+
+  it('denies every path check when the cwd is unknown', () => {
+    expect(checkPath(config, 'read', 'note.txt', undefined)).toContain('working directory')
+  })
+})
+
+describe('GuardState', () => {
+  it('pauses on the first failure and resumes only when it clears', () => {
+    const state = new GuardState()
+    expect(state.paused).toBe(false)
+    state.pause('push-probe', 'writable')
+    expect(state.paused).toBe(true)
+    expect(state.denial()).toContain('push-probe')
+    state.resume('push-probe')
+    expect(state.paused).toBe(false)
   })
 })
