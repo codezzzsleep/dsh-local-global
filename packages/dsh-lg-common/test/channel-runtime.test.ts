@@ -1,0 +1,93 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { Context } from '@deepseek-ai/cordis'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { parseMessage, validateMessage } from '@local-global/lg-protocol'
+import { ChannelRuntime } from '../src/channel.js'
+import { resolveChannelConfig } from '../src/config.js'
+import { runGit } from '../src/git.js'
+
+let workspace: string
+let remote: string
+
+beforeEach(async () => {
+  workspace = await mkdtemp(join(tmpdir(), 'lg-runtime-test-'))
+  remote = join(workspace, 'channel.git')
+  await runGit(['init', '--bare', '--initial-branch', 'main', remote])
+  await runGit(['config', 'protocol.file.allow', 'always'], { cwd: remote })
+})
+
+afterEach(async () => {
+  await rm(workspace, { recursive: true, force: true })
+})
+
+/**
+ * The runtime only touches `ctx.agents.get` from the live channel path; the
+ * archive path under test never resolves an agent, so a minimal stub keeps the
+ * test free of a full harness composition.
+ */
+function stubContext(): Context {
+  return { agents: { get: () => undefined } } as unknown as Context
+}
+
+async function runtime(): Promise<ChannelRuntime> {
+  const config = resolveChannelConfig({
+    repo: `file://${remote}`,
+    role: 'local',
+    pollSeconds: 10,
+    relay: true,
+    cloneDir: join(workspace, 'mirror.git'),
+    stateDir: join(workspace, 'state'),
+  })
+  const channel = new ChannelRuntime(stubContext(), config)
+  await channel.start()
+  return channel
+}
+
+describe('ChannelRuntime.recordRelayed', () => {
+  it('archives a message whose fields it cannot validate, and lets readers mark it INVALID', async () => {
+    const channel = await runtime()
+    // Sequences at or below 0002 are exempt from field validation, so seed two
+    // messages first to make the relayed one land at 0003.
+    await channel.post({ type: 'CLAIM', fields: { scope: [], implementer: 'local' } })
+    await channel.postAs('human', { type: 'HALT', fields: { reason: 'seed' } })
+
+    // A REVIEW without `verdict`: this side does not know the type well enough
+    // to validate it, but §8 still requires archiving it byte-for-byte.
+    const text = "[LG REVIEW from global]\nrefs: ['0011']\nfindings: []\n---\nno verdict yet\n"
+    const result = await channel.recordRelayed(text)
+    expect(result.filename).toBe('0003-global-REVIEW.md')
+
+    const stored = await channel.repo.readFile('messages/0003-global-REVIEW.md')
+    expect(stored).toBe(text)
+
+    const parsed = parseMessage('0003-global-REVIEW.md', stored ?? '')
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) throw new Error('expected parse success')
+    // The reader is what rejects it, not the writer.
+    expect(validateMessage(parsed.message).some((error) => error.code === 'missing-field')).toBe(true)
+  })
+
+  it('refuses relayed text that this side wrote itself', async () => {
+    const channel = await runtime()
+    await expect(channel.recordRelayed('[LG CLAIM from local]\nscope: []\nimplementer: local\n---\n')).rejects.toThrow(/global or human/)
+  })
+
+  it('refuses relayed text with an unusable first line', async () => {
+    const channel = await runtime()
+    await expect(channel.recordRelayed('hello there\n')).rejects.toThrow(/must start with/)
+  })
+})
+
+describe('commit identity', () => {
+  it('uses the machine git identity, not the message sender', async () => {
+    const channel = await runtime()
+    await runGit(['config', 'user.name', 'Machine User'], { cwd: channel.repo.dir })
+    await runGit(['config', 'user.email', 'machine@example.com'], { cwd: channel.repo.dir })
+    const posted = await channel.post({ type: 'CLAIM', fields: { scope: ['x'], implementer: 'local' } })
+
+    const { stdout } = await runGit(['log', '-1', posted.commit, '--format=%an|%ae|%cn'], { cwd: channel.repo.dir })
+    expect(stdout.trim()).toBe('Machine User|machine@example.com|Machine User')
+  })
+})

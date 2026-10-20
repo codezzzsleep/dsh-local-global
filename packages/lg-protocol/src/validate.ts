@@ -16,6 +16,8 @@ const SHA40_RE = /^[0-9a-f]{40}$/
 const SHA256_RE = /^[0-9a-f]{64}$/
 const AC_ID_RE = /^AC-\d+$/
 const FINDING_ID_RE = /^F-\d+$/
+/** A `resolves` entry names both the REVIEW and the finding, so ids may repeat across REVIEWs. */
+const RESOLVES_RE = /^\d{4}\/F-\d+$/
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -108,9 +110,9 @@ export function validateMessage(message: ParsedMessage): MessageError[] {
       if (Object.prototype.hasOwnProperty.call(fields, 'resolves')) {
         const resolves = fields['resolves']
         check(
-          Array.isArray(resolves) && resolves.every((item) => typeof item === 'string' && FINDING_ID_RE.test(item)),
+          Array.isArray(resolves) && resolves.every((item) => typeof item === 'string' && RESOLVES_RE.test(item)),
           'resolves',
-          'a list of finding ids (F-<n>)',
+          'a list of "<review sequence>/F-<n>" strings',
         )
       }
       break

@@ -1,10 +1,12 @@
 - insert:
+    # Environment-independent rows only. `repo` and `role` are supplied by the
+    # user's own profile patch:
+    #
+    #   - id: lg-channel
+    #     config:
+    #       repo: 'file:///path/to/channel.git'
+    #       role: local
     - id: lg-channel
       name: '@local-global/dsh-lg-common/channel'
-      config:
-        repo: 'file:///tmp/lg-m1-channel.git'
-        role: local
-        pollSeconds: 10
-        relay: true
     - id: lg-commands
       name: '@local-global/dsh-lg-common/commands'

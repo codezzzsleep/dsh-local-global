@@ -1,0 +1,9 @@
+# lg-m1 — M1 端到端测试用的 profile 覆盖层。
+# bundle @local-global/dsh-lg-common 只插入与环境无关的行，频道地址与角色
+# 由这里提供；换成真实频道时只改这个文件，不动 bundle。
+- id: lg-channel
+  config:
+    repo: 'file:///tmp/lg-m1-channel.git'
+    role: local
+    pollSeconds: 10
+    relay: true

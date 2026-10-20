@@ -129,11 +129,13 @@ describe('validateMessage — REVIEW', () => {
     expect(validateMessage(message)).toEqual([])
   })
 
-  it('requires REPORT.resolves to list finding ids', () => {
+  it('requires REPORT.resolves to name the REVIEW and the finding', () => {
     const base = makeMessage('REPORT').fields as Record<string, unknown>
-    const good = makeMessage('REPORT', { fields: { ...base, resolves: ['F-1', 'F-12'] } })
+    const good = makeMessage('REPORT', { fields: { ...base, resolves: ['0011/F-1', '0014/F-12'] } })
     expect(validateMessage(good)).toEqual([])
-    const bad = makeMessage('REPORT', { fields: { ...base, resolves: ['F-1', 'nope'] } })
+    const bare = makeMessage('REPORT', { fields: { ...base, resolves: ['F-1'] } })
+    expect(validateMessage(bare).some((error) => error.message.includes('resolves'))).toBe(true)
+    const bad = makeMessage('REPORT', { fields: { ...base, resolves: ['0011/F-1', 'nope'] } })
     expect(validateMessage(bad).some((error) => error.message.includes('resolves'))).toBe(true)
   })
 })

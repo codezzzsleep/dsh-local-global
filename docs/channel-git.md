@@ -63,12 +63,13 @@
 - `commit`、`base`、`final_commit`：完整 40 位 SHA。
 - `evidence`、`negative_tests`：列表，可以为空列表，但字段必须存在。
 - QUESTION 的 qid 就是这条 QUESTION 自己的序号，不另设字段。`default_action` 不得是 C 类动作。`action` 是 C 类动作指纹（见第 7 节），需要批准时填写。
-- DECISION 的 `answers` 是被回答的 QUESTION 或 OBJECTION 的序号。
+- DECISION 的 `answers` 是被回答的 QUESTION 或 OBJECTION 的序号列表，一条 DECISION 可以同时关闭多个。
 - DIRECTIVE 的 `version` 从 1 开始，每次加 1；`acceptance` 是列表，每项是 `{id: AC-<n>, text: ...}`；`scope` 是 `{in: [...], out: [...]}`。
 - PATCH 的 `format` 固定为 `git-format-patch`；补丁文件放在 `attachments/<序号>/<name>`；`bytes` 和 `sha256` 是该文件的字节数和 sha256。
 - CLAIM 的 `implementer` 是 `global` 或 `local`。
 - CORRECTION 只能更正自己发出的消息。
-- REVIEW 的 `verdict` 取 `accepted` 或 `changes-requested`；`findings` 是列表，每项为 `{id: F-<n>, severity: blocking 或 minor, text}`，`verdict` 为 `accepted` 时可以是空列表。REPORT 的可选字段 `resolves` 列出已解决的 finding id，正文逐条说明解决方式。有 blocking 的 finding 未解决时，对应的工作项不算完成。
+- REVIEW 的 `verdict` 取 `accepted` 或 `changes-requested`；`findings` 是列表，每项为 `{id: F-<n>, severity: blocking 或 minor, text}`，`verdict` 为 `accepted` 时可以是空列表。
+- REPORT 的可选字段 `resolves` 列出已解决的 finding，写法是 `<REVIEW 序号>/F-<n>`，例如 `0011/F-1`。每条 REVIEW 的 finding 都从 F-1 起编，只写 `F-1` 会把别的 REVIEW 的同号 finding 一起算成已解决。正文需逐条说明解决方式。有 blocking 的 finding 未解决时，对应的工作项不算完成。
 - `probes`：列表，每项是 `{name, expected, actual, pass}`。
 - STOP 的 `acceptance`：列表，每项是 `{id: AC-<n>, evidence: [...]}`，覆盖当前 DIRECTIVE 的全部验收标准。
 
@@ -102,7 +103,7 @@ STATUS 用于心跳和状态，不进 `messages/`，不占序号，以免冲淡�
 
 - **当前 DIRECTIVE**：`version` 最大的那一条。
 - **未关闭问题**：没有被任何 DECISION 的 `answers` 引用的 QUESTION 和 OBJECTION。
-- **可用的批准**：所有 DECISION 的 `approve_action`，减去所有 REPORT 的 `consumed_approvals`。lg-action-gate 放行一次后立即在内存里扣除，并在下一条 REPORT 的 `consumed_approvals` 里登记。
+- **可用的批准**：所有 DECISION 的 `approve_action`，减去所有 REPORT 的 `consumed_approvals`。`consumed_approvals` 登记的是**已用掉批准的那条 DECISION 的序号**，不是动作指纹——指纹只用于匹配命令，序号才唯一确定是哪一次批准。lg-action-gate 放行一次后立即在内存里扣除，并在下一条 REPORT 的 `consumed_approvals` 里登记该 DECISION 序号。
 - **动作指纹**：`<规则 id>:<命令文本 UTF-8 编码的 sha256 前 12 位十六进制>`。
 
 ## 8. 中转模式
@@ -112,6 +113,7 @@ Global 不能直接写频道仓库时（例如 Global 在一个只能读公开�
 - Global 把消息全文交给 Human，Human 粘贴给 Local。
 - Local 用 `lg_record_relayed` 工具原样存档：参数就是全文；首行的发送者必须是 `global` 或 `human`；文件名按首行生成；工具不得改动任何字节。
 - 只有 lg-channel 配置了 `relay: true` 时这个工具才可用。
+- 存档不校验字段：不符合第 4 节要求的中转消息照样原样入库，由读取方标为 `[LG INVALID #<序号>]`。协议升级期间这是必须的——某一侧还不认识的新类型，不能因此存不进去。只有首行无法解析时才拒绝，因为文件名要从首行生成。
 - Local 必须先存档、再执行。
 
 ## 9. 时间与身份

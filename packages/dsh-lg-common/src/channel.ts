@@ -8,6 +8,8 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { UserMessage } from '@deepseek-ai/dsh-llm'
+import type { SessionId } from '@deepseek-ai/dsh-session'
 // Module augmentations only: `ctx.tools` lives in dsh-tools, `agent.*` in dsh-agent.
 import type {} from '@deepseek-ai/dsh-tools'
 import {
@@ -104,7 +106,9 @@ export class ChannelRuntime {
   private boundAgent(): Agent | undefined {
     const sessionId = this.state.boundSessionId
     if (sessionId === null) return undefined
-    return this.ctx.agents.get(sessionId as never) as Agent | undefined
+    // The stored id is a plain string; the registry keys agents by the branded
+    // SessionId, whose brand exists only in the type system.
+    return this.ctx.agents.get(sessionId as SessionId)
   }
 
   private async persist(patch: Partial<PersistedState>): Promise<void> {
@@ -154,7 +158,7 @@ export class ChannelRuntime {
     }
     if (parsed.message.sender === this.config.role) return false
     if (parsed.message.type === 'HALT') {
-      agent.cancel({ kind: 'user' } as never)
+      agent.cancel({ kind: 'user' })
       this.inject(agent, this.renderDelivery(parsed.message, text))
       await this.persist({ halted: true })
       return true
@@ -172,14 +176,18 @@ export class ChannelRuntime {
 
   /** Hand one user-role message to the agent: steer while it runs, follow up when idle. */
   private inject(agent: Agent, body: string): void {
-    const message = Object.freeze({
-      id: randomUUID(),
-      role: 'user' as const,
+    // Built here rather than with dsh-llm's createUserMessage: the bundle keeps
+    // no runtime dependency on the harness packages (the profile does not
+    // install peer dependencies), so the only cast is the MessageId brand,
+    // which is a string at runtime.
+    const message: UserMessage = Object.freeze({
+      id: randomUUID() as UserMessage['id'],
+      role: 'user',
       content: Object.freeze([{ type: 'text' as const, text: body }]),
       source: { kind: 'user' as const },
     })
-    if (agent.status === 'running') agent.steer(message as never)
-    else agent.followup(message as never)
+    if (agent.status === 'running') agent.steer(message)
+    else agent.followup(message)
   }
 
   /** Validate a message locally before it is rendered into a commit. */
@@ -244,10 +252,12 @@ export class ChannelRuntime {
     if (sender !== 'global' && sender !== 'human') {
       throw new ChannelError('relay-sender', 'relayed text must come from global or human, not from this side')
     }
+    // §8: archive first, judge later. Only the header is required, because the
+    // file name is built from it; field-level problems are left for readers to
+    // report as [LG INVALID #<seq>] (that is how a new message type can be
+    // relayed before this side knows how to validate it).
     const parsed = parseMessage(`9999-${sender}-${type}.md`, text)
     if (!parsed.ok) throw new ChannelError('invalid-message', parsed.errors.map((error) => error.message).join('; '), parsed.errors)
-    const errors = validateMessage(parsed.message)
-    if (errors.length > 0) throw new ChannelError('invalid-message', errors.map((error) => error.message).join('; '), errors)
     return await this.repo.append((seq) => ({
       sender,
       type,

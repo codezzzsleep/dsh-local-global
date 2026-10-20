@@ -1227,7 +1227,7 @@
       - id: tool-plugin-market
         name: '@deepseek-ai/dsh-plugin-market/tools'
         disabled: !!js '!ctx.get(''profileContext'')'
-# == @local-global/dsh-lg-common
+# == @local-global/dsh-lg-common, patched by /var/lib/deepseek-harness/.dsh/profiles/lg-m1/cordis.patch.yml
 - id: lg-channel
   name: '@local-global/dsh-lg-common/channel'
   config:
@@ -1235,5 +1235,6 @@
     role: local
     pollSeconds: 10
     relay: true
+# == @local-global/dsh-lg-common
 - id: lg-commands
   name: '@local-global/dsh-lg-common/commands'

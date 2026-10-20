@@ -98,9 +98,27 @@ describe('foldState — REVIEW findings', () => {
   it('drops a finding named by a later REPORT.resolves', () => {
     const report = makeMessage('REPORT', {
       seq: '0012',
-      fields: { ...makeMessage('REPORT').fields, resolves: ['F-1'] },
+      fields: { ...makeMessage('REPORT').fields, resolves: ['0011/F-1'] },
     })
     const state = foldState([review, report])
     expect(state.unresolvedFindings.map((entry) => entry.finding.id)).toEqual(['F-2'])
+  })
+
+  it('does not resolve another REVIEW that reuses the same finding id', () => {
+    const second = makeMessage('REVIEW', {
+      seq: '0014',
+      fields: {
+        refs: ['0012'],
+        verdict: 'changes-requested',
+        findings: [{ id: 'F-1', severity: 'blocking', text: 'second review, same id' }],
+      },
+    })
+    const report = makeMessage('REPORT', {
+      seq: '0015',
+      fields: { ...makeMessage('REPORT').fields, resolves: ['0011/F-1'] },
+    })
+    const state = foldState([review, second, report])
+    // 0011/F-1 is resolved; 0014/F-1 is a different finding with the same id.
+    expect(state.unresolvedFindings.map((entry) => `${entry.review}/${entry.finding.id}`)).toEqual(['0011/F-2', '0014/F-1'])
   })
 })

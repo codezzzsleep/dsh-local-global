@@ -92,7 +92,8 @@ export function foldState(messages: readonly ParsedMessage[]): ChannelState {
       }
       case 'REPORT': {
         for (const seq of seqListField(message, 'consumed_approvals')) consumed.add(seq)
-        for (const id of seqListField(message, 'resolves')) resolved.add(id)
+        // Key by REVIEW sequence + finding id: every REVIEW restarts its ids at F-1.
+        for (const key of seqListField(message, 'resolves')) resolved.add(key)
         break
       }
       case 'REVIEW': {
@@ -116,7 +117,7 @@ export function foldState(messages: readonly ParsedMessage[]): ChannelState {
   return {
     ...(directive === undefined ? {} : { directive }),
     openQuestions: questions.filter((message) => !answered.has(message.seq)),
-    unresolvedFindings: reviews.filter((entry) => !resolved.has(entry.finding.id)),
+    unresolvedFindings: reviews.filter((entry) => !resolved.has(`${entry.review}/${entry.finding.id}`)),
     approvals: grants.filter((grant) => !consumed.has(grant.decision)),
     ...(halt === undefined ? {} : { halt }),
     lastSeq,

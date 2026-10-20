@@ -52,6 +52,9 @@ export async function runGit(args: readonly string[], options: GitOptions = {}):
     child.stderr.on('data', (chunk: string) => {
       stderr += chunk
     })
+    // A command that exits before reading stdin closes the pipe; that is not a
+    // failure of the command itself.
+    child.stdin.on('error', () => {})
     child.on('error', reject)
     child.on('close', (code) => {
       if (code === 0) {
@@ -193,13 +196,11 @@ export class ChannelRepo {
   private async commitFile(parent: string | undefined, path: string, request: AppendRequest, seq: string): Promise<string> {
     const scratch = await mkdtemp(join(tmpdir(), 'lg-index-'))
     try {
-      const env = {
-        GIT_INDEX_FILE: join(scratch, 'index'),
-        GIT_AUTHOR_NAME: request.sender,
-        GIT_AUTHOR_EMAIL: `${request.sender}@local-global.invalid`,
-        GIT_COMMITTER_NAME: request.sender,
-        GIT_COMMITTER_EMAIL: `${request.sender}@local-global.invalid`,
-      }
+      // Only the index is redirected. Author and committer come from the
+      // machine's git configuration: the message's sender is declared by its
+      // first line and file name (docs/channel-git.md §9), never by inventing
+      // a git identity that does not exist on this machine.
+      const env = { GIT_INDEX_FILE: join(scratch, 'index') }
       const { stdout: blob } = await runGit(['hash-object', '-w', '--stdin'], { cwd: this.dir, input: request.text })
       if (parent !== undefined) await runGit(['read-tree', parent], { cwd: this.dir, env })
       await runGit(['update-index', '--add', '--cacheinfo', `100644,${blob.trim()},${path}`], { cwd: this.dir, env })
