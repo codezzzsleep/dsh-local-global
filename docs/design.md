@@ -195,6 +195,7 @@ Local 一侧也跑一项：尝试进入或停止 Global 的 sandbox，必须失�
 | CLAIM | 双方 | 范围（路径或功能）、实现者 | 实现锁 |
 | OBJECTION | Local | 针对的消息、证据 | 带证据的异议 |
 | CORRECTION | 双方 | 作废的消息编号、更正内容 | 更正历史 |
+| REVIEW | Global | 结论、findings 列表 | 对一份 REPORT 给出接受或改动的结论 |
 | ISOLATION\_REPORT | 双方 | 每项探针的结果 | 隔离自检 |
 | STATUS | 双方 | 状态、已读序号、执行中的指令版本 | 心跳与状态，不改变任何指令 |
 | STOP | Global | 验收标准、最终 commit、证据路径 | 宣布任务完成 |

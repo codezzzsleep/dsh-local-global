@@ -5,52 +5,61 @@ $ pnpm --version
 $ dsh --version
 0.2.1-rc.2
 
-$ pnpm -r test
-Scope: 2 of 3 workspace projects
+$ pnpm install
 Scope: all 3 workspace projects
-✓ Lockfile passes supply-chain policies (verified 10m ago)
+✓ Lockfile passes supply-chain policies (verified 18m ago)
 Lockfile is up to date, resolution step is skipped
 Already up to date
 
-[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: esbuild@0.28.2
+Done in 921ms using pnpm v11.28.5
 
-Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.
-[WARN] The install that runs before scripts failed, so your node_modules may be out of sync with your lockfile. Set "verifyDepsBeforeRun: false" to skip this install.
+$ pnpm -r test
+Scope: 2 of 3 workspace projects
 $ vitest run
 
  RUN  v3.2.7 /var/lib/deepseek-harness/GlobalAndLocalAgent/dsh-local-global/packages/lg-protocol
 
- ✓ test/format.test.ts (12 tests) 23ms
- ✓ test/fold.test.ts (14 tests) 24ms
- ✓ test/validate.test.ts (30 tests) 48ms
+ ✓ test/parse.test.ts (6 tests) 17ms
+ ✓ test/fold.test.ts (10 tests) 21ms
+ ✓ test/validate.test.ts (31 tests) 59ms
+ ✓ test/format.test.ts (6 tests) 17ms
  ✓ test/seq.test.ts (7 tests) 5ms
 
- Test Files  4 passed (4)
-      Tests  63 passed (63)
-   Start at  01:21:20
-   Duration  623ms (transform 140ms, setup 0ms, collect 462ms, tests 100ms, environment 1ms, prepare 265ms)
+ Test Files  5 passed (5)
+      Tests  60 passed (60)
+   Start at  01:29:09
+   Duration  646ms (transform 179ms, setup 0ms, collect 537ms, tests 119ms, environment 1ms, prepare 337ms)
 
 $ vitest run
 
  RUN  v3.2.7 /var/lib/deepseek-harness/GlobalAndLocalAgent/dsh-local-global/packages/dsh-lg-common
 
- ✓ test/git-channel.test.ts (5 tests) 492ms
+ ✓ test/git-channel.test.ts (5 tests) 493ms
 
  Test Files  1 passed (1)
       Tests  5 passed (5)
-   Start at  01:21:22
-   Duration  824ms (transform 84ms, setup 0ms, collect 118ms, tests 492ms, environment 0ms, prepare 65ms)
+   Start at  01:29:10
+   Duration  829ms (transform 81ms, setup 0ms, collect 122ms, tests 493ms, environment 0ms, prepare 65ms)
 
 
-## 负测与测试要求的对应（AC-2）
+## 结果
 
-| 0005 测试要求 | 用例 |
-|---|---|
-| 1 首行格式错误被拒 | `test/fixtures.ts` › parseMessage › rejects a first line that does not match the header grammar |
-| 2 文件名发送者或类型与首行不一致被拒 | `test/fixtures.ts` › rejects a file whose sender disagrees with its first line / whose type disagrees |
-| 3 每种类型至少一个缺必填字段被拒 | `test/validate.test.ts` › validateMessage — required fields › 12 个类型各一条（逐字段删） |
-| 4 角色越权：local 发 DIRECTIVE、global 发 REPORT | `test/validate.test.ts` › sender authority › 两条 + global 发 TASK + CLAIM 双方合法 |
-| 5 序号跳号或重复被识别 | `test/seq.test.ts` › findSeqAnomalies › reports a gap / reports a duplicate |
-| 6 DECISION 回答后 QUESTION 不再未关闭 | `test/fold.test.ts` › open questions › lists a QUESTION until a DECISION answers it |
-| 7 批准登记进 consumed_approvals 后不可再用 | `test/fold.test.ts` › approvals › drops the approval once a REPORT registers it |
-| 额外：真实 git 并发写入 | `test/git-channel.test.ts` › lets two independent writers push concurrently without a lost or duplicate sequence |
+- `pnpm install`：无 `ERR_PNPM_IGNORED_BUILDS`、无警告，esbuild 的 postinstall 正常执行。
+- `pnpm -r test`：**65 个用例全部通过**（lg-protocol 60 + dsh-lg-common 5），0 失败，0 跳过。
+
+## 负测与 0005“测试要求”的对应（AC-2）
+
+| # | 0005 要求 | 用例所在文件与用例名 |
+|---|---|---|
+| 1 | 首行格式错误的消息被拒 | `packages/lg-protocol/test/parse.test.ts` › `parseMessage` › rejects a first line that does not match the header grammar |
+| 2 | 文件名中的发送者或类型与首行不一致被拒 | `packages/lg-protocol/test/parse.test.ts` › `parseMessage` › rejects a file whose sender disagrees with its first line；rejects a file whose type disagrees with its first line |
+| 3 | 每种类型至少一个缺必填字段被拒 | `packages/lg-protocol/test/validate.test.ts` › `validateMessage — required fields` › 13 个类型各一条（含 REVIEW） |
+| 4 | 角色越权被拒 | `packages/lg-protocol/test/validate.test.ts` › `validateMessage — sender authority` › rejects a DIRECTIVE written by local；rejects a REPORT written by global；rejects a REVIEW written by local |
+| 5 | 序号跳号或重复被识别 | `packages/lg-protocol/test/seq.test.ts` › `findSeqAnomalies` › reports a gap；reports a duplicate |
+| 6 | DECISION 回答后 QUESTION 不再未关闭 | `packages/lg-protocol/test/fold.test.ts` › `foldState — open questions` › lists a QUESTION until a DECISION answers it |
+| 7 | 批准登记进 consumed_approvals 后不可再用 | `packages/lg-protocol/test/fold.test.ts` › `foldState — approvals` › drops the approval once a REPORT registers it in consumed_approvals |
+| 集成 | 两个写入者同时向同一 bare 仓库写消息 | `packages/dsh-lg-common/test/git-channel.test.ts` › `ChannelRepo` › lets two independent writers push concurrently without a lost or duplicate sequence |
+
+## 关于 test/fixtures.ts（F-3）
+
+`fixtures.ts` 现在只导出夹具（`VALID_FIELDS`、`PRIMARY_SENDER`、`makeMessage`），不再包含任何用例。此前它同时承载了 parse 用例，而它被三个测试文件 import，导致这 6 个用例被重复收集三次——旧 test.txt 里 `format.test.ts (12 tests)` 这类偏大的数字就是这么来的。拆到 `parse.test.ts` 后每个用例只跑一次。

@@ -52,6 +52,7 @@
 | CLAIM | global、local | `scope`、`implementer` | — |
 | OBJECTION | local | `target`、`evidence` | — |
 | CORRECTION | global、local、human | `corrects`、`replacement` | — |
+| REVIEW | global | `refs`、`verdict`、`findings` | — |
 | ISOLATION_REPORT | global、local | `probes` | — |
 | STOP | global | `final_commit`、`acceptance` | — |
 | HALT | human | `reason` | — |
@@ -67,6 +68,7 @@
 - PATCH 的 `format` 固定为 `git-format-patch`；补丁文件放在 `attachments/<序号>/<name>`；`bytes` 和 `sha256` 是该文件的字节数和 sha256。
 - CLAIM 的 `implementer` 是 `global` 或 `local`。
 - CORRECTION 只能更正自己发出的消息。
+- REVIEW 的 `verdict` 取 `accepted` 或 `changes-requested`；`findings` 是列表，每项为 `{id: F-<n>, severity: blocking 或 minor, text}`，`verdict` 为 `accepted` 时可以是空列表。REPORT 的可选字段 `resolves` 列出已解决的 finding id，正文逐条说明解决方式。有 blocking 的 finding 未解决时，对应的工作项不算完成。
 - `probes`：列表，每项是 `{name, expected, actual, pass}`。
 - STOP 的 `acceptance`：列表，每项是 `{id: AC-<n>, evidence: [...]}`，覆盖当前 DIRECTIVE 的全部验收标准。
 
