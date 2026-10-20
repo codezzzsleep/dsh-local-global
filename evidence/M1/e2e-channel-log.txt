@@ -1,0 +1,24 @@
+a67ccbd9a262b3abc0e766f01d73c1d927e33e55 msg 0007 global DIRECTIVE
+314817337238c73a6d0cede52d6d64f7f96cec64 msg 0006 human HALT
+f6a7ac79ed5f02d632c7ee9b353cd090cc3014c4 msg 0005 human HALT
+038392000806e71b807a313d34bd228096adf510 msg 0004 global DIRECTIVE
+0c7673a7f6515d21ad49307e2ddc3637e4cf39de msg 0003 local REPORT
+8fe153023065d6db80152f77f149377fd8cc7d4a msg 0002 global DIRECTIVE
+f1a92cecb7b0b1aa58551fc555f1ef83e6567822 msg 0001 human TASK
+[LG DIRECTIVE from global]
+version: 1
+goal: "M1 e2e probe"
+priorities: ["P1 probe"]
+acceptance: [{"id":"AC-1","text":"probe"}]
+scope: {"in":["none"],"out":[]}
+---
+Probe directive body.
+---
+[LG DIRECTIVE from global]
+version: 1
+goal: "M1 e2e probe"
+priorities: ["P1 probe"]
+acceptance: [{"id":"AC-1","text":"probe"}]
+scope: {"in":["none"],"out":[]}
+---
+Probe directive body.
