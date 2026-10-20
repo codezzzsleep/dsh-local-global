@@ -1,0 +1,62 @@
+# @local-global/dsh-lg-global
+#
+# Environment-independent rows only: `workspace`, `remote`, and the allowlist
+# are supplied by the profile that installs this bundle (see the M2 profile
+# patch in the evidence directory).
+- insert:
+    - id: preset-lg-global
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: lg-global
+        name: Global
+        order: 1
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: 'You are Global, the judge in a Local-Global pair, powered by {{model}}.'
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+              instructionFileCandidates: ['LG-ROLE.md']
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+            config:
+              read: true
+              readImage: true
+              write: true
+              edit: true
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+
+- id: agent-preset-registry
+  name: '@deepseek-ai/dsh-agent-preset-registry'
+  config:
+    default: lg-global
+
+# A Global profile must not keep a shell-bearing preset around: the user patch
+# layer can still override `default`, which lg-integrity refuses at startup.
+- id: preset-standard
+  disabled: true
+- id: preset-cordis
+  disabled: true
+- id: preset-ptc
+  disabled: true
+- id: preset-minimal
+  disabled: true
+
+- insert:
+    - id: lg-scope
+      name: '@local-global/dsh-lg-global/scope'
+    - id: lg-repo
+      name: '@local-global/dsh-lg-global/repo'
+    - id: lg-integrity
+      name: '@local-global/dsh-lg-global/integrity'

@@ -1,0 +1,57 @@
+{
+  "name": "@local-global/dsh-lg-global",
+  "version": "0.0.0",
+  "description": "Global-side Local–Global plugins for DeepSeek Harness: preset, scope, repo, integrity.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./scope": {
+      "types": "./lib/scope.d.ts",
+      "default": "./lib/scope.js"
+    },
+    "./repo": {
+      "types": "./lib/repo.d.ts",
+      "default": "./lib/repo.js"
+    },
+    "./integrity": {
+      "types": "./lib/integrity.d.ts",
+      "default": "./lib/integrity.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/**/*.js",
+    "lib/**/*.d.ts",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "dsh": ">=0.2.1-rc.2 <0.3.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@local-global/lg-protocol": "file:../lg-protocol"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/dsh-agent": ">=0.2.1-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-agent-preset-registry": ">=0.2.1-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-session": ">=0.2.1-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-tools": ">=0.2.1-rc.2 <0.3.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/dsh-agent": ">=0.2.1-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-agent-preset-registry": ">=0.2.1-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-session": ">=0.2.1-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-tools": ">=0.2.1-rc.2 <0.3.0"
+  }
+}

@@ -287,7 +287,7 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
 - **网络**：在 `tools/pre-execute` 里检查 `web_fetch` 的目标，默认是 **allowlist**，名单可配置。放 pre-execute 而不是守卫里，是因为解析域名是异步的，守卫必须同步。
   - 只允许 `http` 和 `https`；`file://`、`ftp://`、`data:` 等其他协议一律拒绝。
   - 比对的是**解析后的地址**与声明的域名两者：域名必须在名单里，解析结果也不能落在本机、局域网或链路本地地址（127.0.0.0/8、::1、10.0.0.0/8、172.16.0.0/12、192.168.0.0/16、169.254.0.0/16 等）。
-  - 先解析再判断存在 DNS rebinding 的时间差：名单模式要求解析结果命中名单里预先登记的地址集合，或把解析结果固定之后才发请求。
+  - 能做到的只有一种办法：**在 `tools/pre-execute` 里先解析域名，要求解析结果不是私有地址，同时要求域名在名单内**。`web_fetch` 是 dsh 自带的工具，pre-execute 拿不到它的 socket，也就无法把解析结果固定下来，所以“固定解析结果再请求”这一条做不到，不写进方案。剩下的 DNS rebinding 时间窗只对**用户自己加进名单的域名**成立；默认名单里全是 GitHub 控制的域名，攻击者改不了它们的解析。
   - 默认名单（可覆盖）：`github.com`、`api.github.com`、`raw.githubusercontent.com`、`codeload.github.com`、`objects.githubusercontent.com`、`gist.github.com`、`gist.githubusercontent.com`。这张表只覆盖“读 GitHub 上的公开仓库内容”，模型 API 走适配器自己的网络，不经过 `web_fetch`。
 
 **lg-repo：Global 读仓库的唯一途径**
@@ -303,7 +303,10 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
 
 - 建立镜像后立即把 `remote.origin.pushurl` 设成无效值（例如 `file:///dev/null`），让同一个 origin 想推也推不了。
 - 凭据只给只读权限：deploy key 只读，或 fine-grained token 只开 Contents: Read。
-- 启动探针实测：用现有凭据对镜像执行一次 `git push --dry-run`，**必须失败**；成功就说明环境里混进了写凭据，发 ISOLATION\_REPORT 并拒绝工作。
+- 启动探针实测：用镜像里配置的**真实远端地址**执行 `git push --dry-run <remote> HEAD:refs/heads/<branch>`，必须失败；成功就说明环境里混进了写凭据，发 ISOLATION\_REPORT 并拒绝工作。
+- 判据是**失败原因**，不是“失败了”：
+  - 失败信息含权限类字样（`Permission denied`、`403`、`denied`、`read-only`）→ 通过。
+  - 失败原因是地址不可达、URL 非法、仓库不存在 → 判为**不确定**，探针报错并拒绝工作。先前的写法先把 `pushurl` 置成无效值再测，就属于这一类：它永远会“失败”，却证明不了没有写权限。
 
 **lg-directive：Global 的写出口**
 
@@ -322,7 +325,7 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
 
 启动时和每次 `lg_repo_sync` 时执行：
 
-1. **枚举工具白名单**：列出 Global 会话当前可见的全部工具，与配置的白名单（`read`、`read_image`、`write`、`edit`、`glob`、`grep`、`web_fetch`、`web_search`、`lg_*`、`present`）逐一比对。出现白名单以外的名字，就发 ISOLATION\_REPORT 并暂停工作。这是规则层内堵住“用户 patch 加回 bash”的主要手段——不看配置怎么写，只看会话实际能调到什么。
+1. **枚举工具白名单**：列出 Global 会话当前可见的全部工具，与配置的白名单（`read`、`read_image`、`write`、`edit`、`glob`、`grep`、`web_fetch`、`web_search`、`lg_*`）逐一比对。`present` 不在白名单里：Global 的 preset 不装它，而它接受路径参数、又不在 lg-scope 的路径守卫范围内，收进来等于开一个绕过路径检查的口子。出现白名单以外的名字，就发 ISOLATION\_REPORT 并暂停工作。这是规则层内堵住“用户 patch 加回 bash”的主要手段——不看配置怎么写，只看会话实际能调到什么。
 2. **断言 preset**：`agent-preset-registry.default` 必须是 `lg-global`，且没有其他 preset 处于启用状态。
 3. **组合哈希**：对 `--dump-config` 的**解析结果**（不是 profile 文件）算哈希，与上次比对。文件没变而 bundle 版本变了，也要能发现。
 4. **负向自测**：用 lg-scope 的规则尝试读 Local 的工作目录、访问本机地址、对镜像 push，三者都必须失败。

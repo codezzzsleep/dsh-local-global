@@ -1,0 +1,13 @@
+# lg-global-m2：M2 验收专用 profile（独立 DSH_HOME）。环境相关配置只在这里。
+- id: lg-scope
+  config:
+    workspace: '/var/lib/deepseek-harness/.dsh-global-m2/workspace'
+- id: lg-repo
+  config:
+    remote: 'git@github.com:codezzzsleep/dsh-local-global.git'
+    branch: main
+    mirrorDir: '/var/lib/deepseek-harness/.dsh-global-m2/workspace/repo.git'
+- id: lg-integrity
+  config:
+    expectedPreset: lg-global
+    profilePrefix: lg-global
