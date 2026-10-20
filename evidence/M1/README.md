@@ -30,8 +30,8 @@
 | 项 | 内容 |
 |---|---|
 | 证据 | `evidence/M1/test.txt` |
-| 命令 | `pnpm install` 然后 `pnpm -r test` |
-| 结果 | PASS。65 个用例全过（lg-protocol 60 + dsh-lg-common 5），0 失败，安装输出无错误无警告 |
+| 命令 | `pnpm install`、`pnpm -r build`、`pnpm -r test` |
+| 结果 | PASS。70 个用例全过（lg-protocol 61 + dsh-lg-common 9），0 失败，安装与构建输出无错误无警告 |
 | 环境 | real |
 
 `test.txt` 开头是完整的 `pnpm install` 输出，末尾是把 0005“测试要求”七条负测逐条指到具体用例的对照表，另加真实 git 并发写入的集成测试。
@@ -42,14 +42,14 @@
 |---|---|
 | 证据 | `evidence/M1/dump-config-before-install.txt`、`dump-config-after-install.txt`、`dump-config-after-remove.txt` |
 | 命令 | `dsh plugin --profile lg-m1 add ./packages/dsh-lg-common` / `... remove @local-global/dsh-lg-common` / `dsh --profile lg-m1 --dump-config` |
-| 结果 | PASS。装前 1229 行且无 `lg-` 行；装后 1239 行，末两条为 `lg-channel`、`lg-commands`；卸后回到 1229 行，与装前 `diff` 完全相同 |
+| 结果 | PASS。装前 1229 行且无 `lg-` 行；装后 1240 行，末两条为 `lg-channel`（配置来自 profile 覆盖层）与 `lg-commands`；卸后回到 1229 行，与装前 `diff` 完全相同 |
 | 环境 | real |
 
 ## AC-4 端到端 E1–E8
 
 | 项 | 内容 |
 |---|---|
-| 证据 | `evidence/M1/e2e.md`（逐项结论）、`e2e-evidence.jsonl`（每步原始记录）、`e2e-channel-log.txt`（测试频道提交日志与消息原文） |
+| 证据 | `evidence/M1/e2e.md`（逐项结论）、`e2e-evidence.jsonl`（每步原始记录）、`e2e-channel-log.txt`（测试频道提交日志与消息原文）、`lg-m1-cordis.patch.yml`（频道配置所在的 profile 覆盖层） |
 | 命令 | `LG_E2E_PHASE=1 dsh --profile lg-m1` 然后 `LG_E2E_PHASE=2 dsh --profile lg-m1`（两次进程，用于验证 E5 重启） |
 | 结果 | PASS，E1–E8 八项全过，无超时 |
 | 环境 | real（测试频道 `/tmp/lg-m1-channel.git`，bare） |
@@ -65,9 +65,10 @@
 ```sh
 pnpm install
 pnpm -r build          # 生成 packages/*/lib，dsh plugin add 需要它
-pnpm -r test           # 期望 65 passed
+pnpm -r test           # 期望 70 passed
 git init --bare --initial-branch=main /tmp/lg-m1-channel.git
 dsh --profile lg-m1 --from-default-profile web
 dsh plugin --profile lg-m1 add ./packages/dsh-lg-common
+# 频道地址与角色写进 profile 自己的 cordis.patch.yml（见 lg-m1-cordis.patch.yml）
 dsh --profile lg-m1 --dump-config | tail -12
 ```

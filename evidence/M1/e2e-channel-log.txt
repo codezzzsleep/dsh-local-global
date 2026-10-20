@@ -1,10 +1,11 @@
-a67ccbd9a262b3abc0e766f01d73c1d927e33e55 msg 0007 global DIRECTIVE
-314817337238c73a6d0cede52d6d64f7f96cec64 msg 0006 human HALT
-f6a7ac79ed5f02d632c7ee9b353cd090cc3014c4 msg 0005 human HALT
-038392000806e71b807a313d34bd228096adf510 msg 0004 global DIRECTIVE
-0c7673a7f6515d21ad49307e2ddc3637e4cf39de msg 0003 local REPORT
-8fe153023065d6db80152f77f149377fd8cc7d4a msg 0002 global DIRECTIVE
-f1a92cecb7b0b1aa58551fc555f1ef83e6567822 msg 0001 human TASK
+4803b212691480295d6b34d66c6de38bc995afd2 codezzzsleep <codezzzsleep@gmail.com> msg 0007 global DIRECTIVE
+5fd6d514c31f58f45af00c17e2a01e032e094472 codezzzsleep <codezzzsleep@gmail.com> msg 0006 human HALT
+0abe2be4bf6ca2ead5cdb9da004ffa520229e308 codezzzsleep <codezzzsleep@gmail.com> msg 0005 human HALT
+17b337cca6541eeff6fb62604276c92f87d6dbd3 codezzzsleep <codezzzsleep@gmail.com> msg 0004 global DIRECTIVE
+c181727f98a30c0cdb4204d41bc68427215b4cb4 codezzzsleep <codezzzsleep@gmail.com> msg 0003 local REPORT
+6481677e10bdb827e3eab7c9711f15a8bdcbc419 codezzzsleep <codezzzsleep@gmail.com> msg 0002 global DIRECTIVE
+8cd06ea50538e701dbfedcf6ad0c1bc299e83cbc codezzzsleep <codezzzsleep@gmail.com> msg 0001 human TASK
+--- 0002 原文 ---
 [LG DIRECTIVE from global]
 version: 1
 goal: "M1 e2e probe"
@@ -13,7 +14,7 @@ acceptance: [{"id":"AC-1","text":"probe"}]
 scope: {"in":["none"],"out":[]}
 ---
 Probe directive body.
----
+--- 0007 原文（中转存档）---
 [LG DIRECTIVE from global]
 version: 1
 goal: "M1 e2e probe"
