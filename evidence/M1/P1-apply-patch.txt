@@ -1,0 +1,44 @@
+# P1 — 应用 0004 补丁
+
+补丁：频道仓库 attachments/0004/docs-channel-contract.patch
+字节数：29669　sha256：7cf6f2d69fabc3f6a938c863f071877aa2df4488b29e4cde7a0b4b48535a87c9（与 0004 声明一致）
+
+## 应用方式
+
+$ git am --3way attachments/0004/docs-channel-contract.patch
+Applying: docs: git channel contract, STATUS, budget, enforced isolation
+
+## 应用后的提交
+
+$ git log -1 --format="%H%nauthor: %an <%ae>%ncommitter: %cn <%ce>%nsubject: %s"
+2bbb0ff3b38b1f09ffbcb482832e2cf7b36aa1e3
+author: codezzzsleep <codezzzsleep@gmail.com>
+committer: codezzzsleep <codezzzsleep@gmail.com>
+subject: docs: git channel contract, STATUS, budget, enforced isolation
+
+## 三个文件的 sha256
+
+$ sha256sum docs/channel-git.md docs/design.md docs/implementation.md
+87ad7397ff01f8928f7c8f380122ee92c98fa45018bfede00bef9819732284a5  docs/channel-git.md
+d918686369ac3d19ff42aa3cf26512ec21003c391a4a3d282c66f4e9fc40c5ad  docs/design.md
+9098f2e8197a6b4cc18d8e2d6f0c06fc1833e00b3060541e0f6e12d8eac828f5  docs/implementation.md
+
+## 0004 声明的期望值
+87ad7397ff01f8928f7c8f380122ee92c98fa45018bfede00bef9819732284a5  docs/channel-git.md
+d918686369ac3d19ff42aa3cf26512ec21003c391a4a3d282c66f4e9fc40c5ad  docs/design.md
+9098f2e8197a6b4cc18d8e2d6f0c06fc1833e00b3060541e0f6e12d8eac828f5  docs/implementation.md
+
+## 与 0004 声明逐项比对
+IDENTICAL
+
+## repositoryTopics
+
+$ gh repo view codezzzsleep/dsh-local-global --json repositoryTopics
+{"repositoryTopics":[{"name":"dsh-plugin"}]}
+
+## 说明：提交元数据在 Human 要求下改写过一次
+
+补丁最初以 git am 落为 3d626e4048971699f8083b4a76782d4deba34080（author: Global <global@local-global.invalid>，
+正文含 Co-Authored-By: Claude 尾注）。Human 要求撤销该提交，遂以相同 tree 重建为 2bbb0ff（author/committer 均为 codezzzsleep，
+尾注已删除）并 force push 覆盖 main。三个文件的字节未变，sha256 与 0004 声明完全一致。
+因此 AC-1 中『提交作者保持为 Global』一条已由 Human 覆盖，不再成立。
