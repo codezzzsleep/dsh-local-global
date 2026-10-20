@@ -1,0 +1,8 @@
+dsh: warning: 1 entry did not activate
+lg-integrity (@local-global/dsh-lg-global/integrity): Error: lg-integrity: this profile is named "m2-wrong", but lg-global may only run in a profile starting with "lg-global"
+    at new apply (file:///var/lib/deepseek-harness/GlobalAndLocalAgent/dsh-local-global/packages/dsh-lg-global/lib/integrity.js:86:15)
+    at Fiber.execute (file:///opt/deepseek-harness/node_modules/@deepseek-ai/cordis/lib/index.js:1068:24)
+    at file:///opt/deepseek-harness/node_modules/@deepseek-ai/cordis/lib/index.js:1142:34
+    at file:///var/lib/deepseek-harness/.dsh-global-m2/profiles/m2-wrong/#lg-integrity
+    at file:///var/lib/deepseek-harness/.dsh-global-m2/profiles/m2-wrong/#include
+dsh web: http://127.0.0.1:3081/?token=fD7K1sLnVzd1OVSoM7x-6fxYdyzLcbIeFCQjsOfTqew

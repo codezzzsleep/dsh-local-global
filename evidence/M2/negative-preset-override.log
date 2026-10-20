@@ -1,0 +1,28 @@
+dsh: startup failed: 2 required plugins did not activate
+
+Failed plugins (2):
+  webserver (required)
+    Package: @deepseek-ai/dsh-host-webserver
+    Error: listen EADDRINUSE: address already in use 127.0.0.1:3080
+        at Server.setupListenHandle [as _listen2] (node:net:2390:16)
+        at listenInCluster (node:net:2499:12)
+        at node:net:2728:7
+        at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+  lg-integrity
+    Package: @local-global/dsh-lg-global/integrity
+    Error: lg-integrity: refusing to work — defaultId=standard expected=lg-global
+        at new apply (file:///var/lib/deepseek-harness/GlobalAndLocalAgent/dsh-local-global/packages/dsh-lg-global/lib/integrity.js:90:15)
+        at Fiber.execute (file:///opt/deepseek-harness/node_modules/@deepseek-ai/cordis/lib/index.js:1068:24)
+        at file:///opt/deepseek-harness/node_modules/@deepseek-ai/cordis/lib/index.js:1142:34
+        at file:///var/lib/deepseek-harness/.dsh-global-m2/profiles/lg-global-m2/#lg-integrity
+        at file:///var/lib/deepseek-harness/.dsh-global-m2/profiles/lg-global-m2/#include
+
+Plugins waiting for services (5):
+  Plugin                  Missing services
+  web-runtime (required)  webServer
+  open-in-app             webServer
+  directory-picker        webServer
+  harness-dev-context     webApp
+  client-hmr              webServer
+
+Full diagnostics: /var/lib/deepseek-harness/.dsh-global-m2/logs/startup-2026-10-20T18-06-03.236Z-3f987ebc-451b-4abd-9000-061e86505e71.log
