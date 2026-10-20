@@ -4,7 +4,7 @@ Oct 21, 2026 · @ji qi
 
 ## 概述
 
-实现方式：用两个 DeepSeek Harness（dsh）进程分别承载 Global 和 Local，框架本身全部写成 dsh 插件，打包成 `lg-common`、`lg-local`、`lg-global` 三个 bundle，外加一个独立的频道服务。不改 dsh 的任何代码。
+实现方式：用两个 DeepSeek Harness（dsh）进程分别承载 Global 和 Local，框架本身全部写成 dsh 插件，打包成 `lg-common`、`lg-local`、`lg-global` 三个 bundle。频道默认是一个 git 仓库（契约见 `docs/channel-git.md`），不需要单独的服务。不改 dsh 的任何代码。
 
 **为什么基于 dsh**
 
@@ -14,7 +14,7 @@ Oct 21, 2026 · @ji qi
 
 **v0.1 范围**
 
-本地模式、频道服务、两侧插件、角色说明、启动步骤。云端模式和度量统计放到后续版本。
+本地模式、git 频道、两侧插件、角色说明、启动步骤。云端模式和度量统计放到后续版本。
 
 **前提**
 
@@ -54,12 +54,12 @@ dsh 目前是 developer preview，官方明确说明会有不兼容变更。本�
 
 ## 总体方案
 
-Global 和 Local 各是一个独立的 dsh 进程，用不同的 `DSH_HOME` 和 profile；它们之间没有任何直接通道，只通过频道服务对话、通过远端仓库共享事实。
+Global 和 Local 各是一个独立的 dsh 进程，用不同的 `DSH_HOME` 和 profile；它们之间没有任何直接通道，只通过频道仓库对话、通过远端仓库共享事实。
 
 ```mermaid
 flowchart TB
   human["Human<br/>下达任务 · 总开关"]
-  channel["频道服务<br/>令牌决定发送者"]
+  channel["频道仓库（git）<br/>messages/ 只追加"]
   subgraph L["Local 进程（lg-local）"]
     lpreset["standard preset<br/>完整环境，含 bash"]
     lplugins["lg-local 插件<br/>lg-channel · lg-report-gate<br/>lg-action-gate · lg-protect<br/>lg-patch-apply · lg-evidence"]
@@ -91,7 +91,7 @@ flowchart TB
 | 插件 | 所在包 | 职责 |
 | --- | --- | --- |
 | lg-protocol | 库，不是插件 | 消息信封、补丁信封、证据清单的类型与校验 |
-| lg-channel | lg-common | 连接频道、维护游标、把消息投递给绑定的会话；提供 `lg_post`、`lg_read`、`lg_open_questions` |
+| lg-channel | lg-common | 连接频道、维护游标、把消息投递给绑定的会话；提供 `lg_post`、`lg_record_relayed`、`lg_read`、`lg_open_questions` |
 | lg-commands | lg-common | `/lg-bind`、`/lg-halt`、`/lg-status` |
 | lg-report-gate | lg-local | 回合结束前检查是否欠 REPORT |
 | lg-action-gate | lg-local | C 类动作守卫：没有对应 DECISION 就拒绝 |
@@ -109,20 +109,21 @@ Local 侧不另做 preset，继续用 dsh 自带的 standard preset，保留完�
 
 ## 频道插件
 
-lg-channel 把频道服务接进 dsh：拉取新消息，按规则投递给绑定的会话，并提供发消息的工具。两侧共用同一个插件，只是 `role` 不同。
+lg-channel 把频道接进 dsh：拉取新消息，按规则投递给绑定的会话，并提供发消息的工具。频道默认是一个 git 仓库，完整契约见 `docs/channel-git.md`。两侧共用同一个插件，只是 `role` 不同。
 
 ```yaml
 - insert:
     - id: lg-channel
       name: '@local-global/dsh-lg-common/channel'
       config:
-        server: 'http://127.0.0.1:8088'
+        repo: 'https://github.com/<owner>/<频道仓库>.git'   # 或 file:///path/to/channel.git
+        branch: main
         role: local              # Global 进程里写 global
-        tokenEnv: LG_CHANNEL_TOKEN
-        pollWaitSeconds: 30
+        pollSeconds: 60
+        relay: false             # Global 不能直接写频道仓库时，Local 侧设为 true
 ```
 
-令牌放在 `$DSH_HOME/.env` 里，不写进 patch 文件。
+git 认证沿用本机已有的 git 凭据，插件不保存任何令牌。
 
 **绑定会话**
 
@@ -130,7 +131,7 @@ lg-channel 把频道服务接进 dsh：拉取新消息，按规则投递给绑�
 
 **拉取与游标**
 
-插件以长轮询 `GET /v1/messages?after=<游标>&wait=30` 拉取。游标只在消息成功投递后前移，所以进程重启后消息不丢也不重。
+插件每 `pollSeconds` 秒 fetch 一次频道仓库，按序号处理新消息。游标是已投递的最大序号，存在 dsh 的存储里，只在消息成功投递后前移，所以进程重启后消息不丢也不重。校验不通过的消息不投递原文，改为投递一条说明原因的提示。
 
 **投递规则**
 
@@ -144,8 +145,9 @@ lg-channel 把频道服务接进 dsh：拉取新消息，按规则投递给绑�
 
 **发消息工具**
 
-- `lg_post`：参数为 `type`、`refs`、`supersedes`、`fields`、`body`、`attachments`。
-- `lg_read`：按编号范围读历史消息。
+- `lg_post`：参数为 `type`、`refs`、`fields`、`body`、`attachments`。插件负责取序号、写文件、提交和 push，push 冲突时重新取号重试。
+- `lg_record_relayed`：仅中转模式可用。参数是 Human 粘贴过来的 Global 或 Human 消息全文，插件原样存档。
+- `lg_read`：按序号范围读历史消息。
 - `lg_open_questions`：列出未关闭的 QUESTION 和 OBJECTION。
 
 `lg_post` 发送前先在本地校验，不通过就返回错误让模型补全，而不是发出残缺消息：
@@ -154,7 +156,7 @@ lg-channel 把频道服务接进 dsh：拉取新消息，按规则投递给绑�
 2. 必填字段是否齐全，规则见设计文档的“频道协议”。
 3. REPORT 引用的证据路径是否都有清单，且没有过期。
 
-频道服务会再校验一次，并按令牌决定 `from`。模型无法冒充对方发消息。
+git 后端里，发送者身份靠首行和文件名声明，仓库本身不能防伪。防伪由 Global 负责：它每次读取频道时，把所有 from global 的消息与自己保存的发送副本逐字节比对，不一致就发 ISOLATION_REPORT。
 
 ## Local 侧插件
 
@@ -198,7 +200,7 @@ Local 侧插件的作用是把“必须汇报、先批后做、不碰 Global”�
 3. Global 发 DECISION，`fields.approve_action` 写同一个指纹
 4. 守卫看到匹配的 DECISION 后放行一次，用过即失效
 
-守卫必须是同步函数，所以它读的是 lg-channel 在内存里维护的已批准指纹表，而不是现场请求频道服务。
+守卫必须是同步函数，所以它读的是 lg-channel 在内存里维护的已批准指纹表，而不是现场读取频道仓库。
 
 **lg-protect：Local 不碰 Global 的目录**
 
@@ -274,6 +276,8 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
 
 角色说明放在 Global 工作区根目录的 `LG-ROLE.md`，由 `agent-instructions` 每个会话加载。写权限只用于 Global 自己的草稿目录，由 lg-scope 限定。
 
+**lg-global 只能装进专用 profile。** 它会关掉所在 profile 里的 standard 等 preset，装进用户平时用的 profile 会让那个 profile 失去 bash。所以 lg-scope 启动时检查当前 profile 名，必须以 `lg-global` 开头（前缀可配置），否则拒绝启动并说明原因。profile 名从 dsh 的 `profileContext` 服务读取，具体字段以所用版本为准。
+
 **lg-scope：文件与网络的范围**
 
 - **文件**：守卫检查 `read`、`read_image`、`write`、`edit`、`glob`、`grep` 的路径参数（`file_path` 或 `path`）。先按会话目录解析成绝对路径，再取真实路径，必须落在 Global 工作区内，否则拒绝。取真实路径是为了挡住 `..` 和符号链接逃逸。
@@ -309,7 +313,7 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
 
 1. 对 Global 的 profile 目录和 lg 配置文件算哈希，与上次比对；变了就发 ISOLATION\_REPORT 并暂停工作
 2. 用 lg-scope 的规则自测：尝试读 Local 的工作目录、访问本机地址，都必须被拒
-3. 确认频道令牌对应 global 角色
+3. 把频道里所有 from global 的消息与 Global 保存的发送副本逐字节比对，不一致就发 ISOLATION_REPORT
 
 ## 隔离策略
 
@@ -345,7 +349,6 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
 **目录约定**
 
 ```text
-~/.lg/                     频道服务的数据库与令牌
 ~/.lg-global/home/         Global 的 DSH_HOME（凭据、会话、profile）
 ~/.lg-global/workspace/    Global 的工作区，LG-ROLE.md 放在这里
     repo/                  只读镜像，每次同步硬重置
@@ -353,11 +356,12 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
 ~/projects/<项目>/         Local 的工作目录
 ```
 
-**1. 启动频道服务**
+**1. 准备频道仓库**
+
+在 GitHub 新建一个公开仓库作为频道，或者在本机建一个 bare 仓库：
 
 ```sh
-npx @local-global/channel-server init --dir ~/.lg     # 生成 global、local、human 三个角色令牌
-npx @local-global/channel-server start --dir ~/.lg --port 8088
+git init --bare ~/.lg/channel.git
 ```
 
 **2. 安装并启动 Local**
@@ -365,7 +369,6 @@ npx @local-global/channel-server start --dir ~/.lg --port 8088
 ```sh
 dsh --profile lg-local --from-default-profile web     # 首次：从 Web 模板创建 profile
 dsh plugin --profile lg-local add @local-global/dsh-lg-common @local-global/dsh-lg-local
-echo 'LG_CHANNEL_TOKEN=<local 令牌>' >> ~/.dsh/.env
 cd ~/projects/<项目> && dsh --profile lg-local
 ```
 
@@ -377,7 +380,6 @@ cd ~/projects/<项目> && dsh --profile lg-local
 export DSH_HOME=~/.lg-global/home
 dsh --profile lg-global --from-default-profile web
 dsh plugin --profile lg-global add @local-global/dsh-lg-common @local-global/dsh-lg-global
-echo 'LG_CHANNEL_TOKEN=<global 令牌>' >> ~/.lg-global/home/.env
 cd ~/.lg-global/workspace && dsh --profile lg-global --port 3081
 ```
 
@@ -385,11 +387,7 @@ cd ~/.lg-global/workspace && dsh --profile lg-global --port 3081
 
 **4. 下达任务与停止**
 
-```sh
-npx @local-global/channel-server task --dir ~/.lg --file task.md   # Human 发 TASK，两边同时收到
-```
-
-任一侧界面里执行 `/lg-halt` 即发出 HALT，两个会话都会停止。
+Human 把任务交给 Local：中转模式下由 Local 用 `lg_record_relayed` 存档，否则直接把 `messages/<序号>-human-TASK.md` 提交到频道仓库。任一侧界面里执行 `/lg-halt` 即写入一条 HALT，两个会话都会停止。
 
 **lg-local 的关键配置**
 
@@ -435,7 +433,7 @@ npx @local-global/channel-server task --dir ~/.lg --file task.md   # Human 发 T
 
 | 插件 | 正测 | 负测 |
 | --- | --- | --- |
-| lg-channel | 消息按规则投递到绑定会话；重启后游标不丢不重 | 缺必填字段的 `lg_post` 被拒；Local 发 DIRECTIVE 被拒；伪造 `from` 被服务端拒 |
+| lg-channel | 消息按规则投递到绑定会话；重启后游标不丢不重 | 缺必填字段的 `lg_post` 被拒；Local 发 DIRECTIVE 被拒；文件名与首行的发送者或类型不一致被拒；push 冲突后重新取号成功 |
 | lg-action-gate | 有匹配 DECISION 时命令执行一次 | 无 DECISION 时 force push 被拒；同一批准第二次使用被拒 |
 | lg-report-gate | 已发 REPORT 时回合正常结束 | 有新 commit 未报时，回合被 steer 继续 |
 | lg-patch-apply | 正确的补丁返回 APPLIED | 哈希不符返回 REJECTED；已存在返回 DUPLICATE；冲突返回 CONFLICT 且已回滚 |
@@ -458,7 +456,7 @@ npx @local-global/channel-server task --dir ~/.lg --file task.md   # Human 发 T
 
 按依赖顺序分四步，每步结束都有可演示的结果。
 
-1. **M1 通信**：频道服务、lg-channel、lg-commands。两边能互发消息，`/lg-halt` 能让两边停下。
+1. **M1 通信**：lg-protocol、lg-channel（git 后端）、lg-commands。两边能互发消息，`/lg-halt` 能让两边停下。
 2. **M2 Global 隔离**：preset lg-global、lg-scope、lg-repo、lg-integrity。隔离负测全部通过。
 3. **M3 Local 约束**：lg-evidence、lg-patch-apply、lg-report-gate、lg-action-gate、lg-protect。
 4. **M4 判断闭环**：lg-directive、lg-checkpoint。用 OnCue 的三个回放用例做端到端验收。
@@ -467,7 +465,6 @@ npx @local-global/channel-server task --dir ~/.lg --file task.md   # Human 发 T
 
 - dsh 仍是 developer preview：插件以哪个 dsh 版本为基线，`engines.dsh` 的范围怎么定？
 - Global 用哪个模型？要检查截图证据，它必须支持图像输入，因为 `read_image` 只在路由的模型声明支持图像时才执行。
-- 频道服务是复用 OnCue 现有的 8088 服务，还是按本文的接口重写？
 - 会话绑定用手动的 `/lg-bind`，还是收到 TASK 时由插件自动建会话？
 - 文中的插件行 id、配置字段和 `UserMessage` 的构造方式，需要对照所用 dsh 版本的 `--dump-config` 输出和子系统文档逐项核实。
 

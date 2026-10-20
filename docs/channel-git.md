@@ -1,0 +1,123 @@
+# Git 频道契约 v0.1
+
+本文是 lg-channel 默认后端的完整契约：频道就是一个 git 仓库，不需要单独的服务。设计文档“频道协议”一节规定消息的类型与语义，本文规定它们在 git 仓库里的落地方式。
+
+## 1. 仓库布局
+
+```text
+<频道仓库>/
+├── messages/        只追加的消息，每条一个文件
+├── attachments/     消息附件：attachments/<序号>/<文件名>
+└── status/          每个角色一个状态文件，原地覆盖：status/local.json、status/global.json
+```
+
+- 默认分支 `main`。
+- `messages/` 和 `attachments/` 下的文件一经提交，不得修改或删除；更正用 CORRECTION 消息。
+- `status/` 是唯一允许原地覆盖的目录。
+
+## 2. 文件名
+
+`messages/<序号>-<发送者>-<类型>.md`
+
+- 序号：四位十进制，从 `0001` 起连续递增，不跳号。
+- 发送者：`human`、`global`、`local` 之一。
+- 类型：设计文档“消息类型”表中的类型，全大写。
+- 文件名里的发送者和类型必须与首行一致，否则这条消息非法。
+- 一个提交只包含一条消息及其附件，提交信息为 `msg <序号> <发送者> <类型>`。
+
+## 3. 消息格式
+
+```text
+[LG <类型> from <发送者>]
+<YAML 字段区>
+---
+<正文，可选，Markdown>
+```
+
+- 首行必须匹配正则 `^\[LG ([A-Z_]+) from (human|global|local)\]$`。
+- 字段区从第二行开始，到第一行内容恰好为 `---` 的行或文件结束为止，内容是一个 YAML 映射。
+- 所有类型都可以带 `refs`：被引用消息的序号列表，元素为四位字符串，例如 `['0002']`。
+- 编码 UTF-8，换行 LF，文件以换行结尾。
+
+## 4. 各类型的发送者与必填字段
+
+| 类型 | 允许的发送者 | 必填字段 | 可选字段 |
+| --- | --- | --- | --- |
+| TASK | human | `goal`、`constraints`、`budget` | — |
+| REPORT | local | `refs`、`commit`、`directive_version`、`evidence`、`negative_tests` | `open_questions`、`consumed_approvals` |
+| QUESTION | local | `options`、`blocking`、`default_action` | `action` |
+| DECISION | global | `answers`、`choice`、`reason` | `approve_action` |
+| DIRECTIVE | global | `version`、`goal`、`priorities`、`acceptance`、`scope` | — |
+| PATCH | global | `name`、`claim`、`base`、`format`、`bytes`、`sha256` | — |
+| CLAIM | global、local | `scope`、`implementer` | — |
+| OBJECTION | local | `target`、`evidence` | — |
+| CORRECTION | global、local、human | `corrects`、`replacement` | — |
+| ISOLATION_REPORT | global、local | `probes` | — |
+| STOP | global | `final_commit`、`acceptance` | — |
+| HALT | human | `reason` | — |
+
+字段约定：
+
+- `budget`：映射，v0.1 只有 `max_hours`（数字）和 `max_rounds`（整数）两个键。
+- `commit`、`base`、`final_commit`：完整 40 位 SHA。
+- `evidence`、`negative_tests`：列表，可以为空列表，但字段必须存在。
+- QUESTION 的 qid 就是这条 QUESTION 自己的序号，不另设字段。`default_action` 不得是 C 类动作。`action` 是 C 类动作指纹（见第 7 节），需要批准时填写。
+- DECISION 的 `answers` 是被回答的 QUESTION 或 OBJECTION 的序号。
+- DIRECTIVE 的 `version` 从 1 开始，每次加 1；`acceptance` 是列表，每项是 `{id: AC-<n>, text: ...}`；`scope` 是 `{in: [...], out: [...]}`。
+- PATCH 的 `format` 固定为 `git-format-patch`；补丁文件放在 `attachments/<序号>/<name>`；`bytes` 和 `sha256` 是该文件的字节数和 sha256。
+- CLAIM 的 `implementer` 是 `global` 或 `local`。
+- CORRECTION 只能更正自己发出的消息。
+- `probes`：列表，每项是 `{name, expected, actual, pass}`。
+- STOP 的 `acceptance`：列表，每项是 `{id: AC-<n>, evidence: [...]}`，覆盖当前 DIRECTIVE 的全部验收标准。
+
+## 5. STATUS
+
+STATUS 用于心跳和状态，不进 `messages/`，不占序号，以免冲淡消息记录。
+
+- 文件：`status/<角色>.json`，原地覆盖。
+- 内容：`{"state": ..., "last_read": "<序号>", "directive_version": <整数>, "updated_at": "<ISO 8601 UTC>"}`。
+- `state` 取值：`working`、`idle`、`blocked`、`budget-exhausted`、`halted`。
+- 更新时机：`state` 变化时立即更新；否则最多每 10 分钟一次。提交信息为 `status <角色> <state>`。
+- 判断对方失联：`updated_at` 超过 20 分钟未更新。
+
+## 6. 写入与并发
+
+写一条消息的步骤：
+
+1. `git fetch`，以远端 `main` 为准
+2. 取 `messages/` 下的最大序号加 1
+3. 写文件（及附件），单独提交，push
+4. push 被拒时：丢弃本地提交，回到第 1 步重新取号；最多重试 3 次，仍失败就返回错误
+
+## 7. 读取、游标与派生状态
+
+- 每 `pollSeconds` 秒 fetch 一次，默认 60。
+- 游标是已投递的最大序号，存在 dsh 的存储里，只在投递成功后前移。
+- 新消息按序号顺序校验并投递。校验不通过的消息不投递原文，改为投递一条 `[LG INVALID #<序号>] <原因>` 提示；游标照常前移，不被卡住。
+- 发送者与本侧角色相同的消息不投递；`human` 的消息投递给两侧。
+
+以下状态都由读取方从 `messages/` 折叠计算，不另外存储：
+
+- **当前 DIRECTIVE**：`version` 最大的那一条。
+- **未关闭问题**：没有被任何 DECISION 的 `answers` 引用的 QUESTION 和 OBJECTION。
+- **可用的批准**：所有 DECISION 的 `approve_action`，减去所有 REPORT 的 `consumed_approvals`。lg-action-gate 放行一次后立即在内存里扣除，并在下一条 REPORT 的 `consumed_approvals` 里登记。
+- **动作指纹**：`<规则 id>:<命令文本 UTF-8 编码的 sha256 前 12 位十六进制>`。
+
+## 8. 中转模式
+
+Global 不能直接写频道仓库时（例如 Global 在一个只能读公开仓库的环境里），使用中转模式：
+
+- Global 把消息全文交给 Human，Human 粘贴给 Local。
+- Local 用 `lg_record_relayed` 工具原样存档：参数就是全文；首行的发送者必须是 `global` 或 `human`；文件名按首行生成；工具不得改动任何字节。
+- 只有 lg-channel 配置了 `relay: true` 时这个工具才可用。
+- Local 必须先存档、再执行。
+
+## 9. 时间与身份
+
+- 消息的时间取提交时间（committer date）。它由写入方的机器设定，不是服务器时间。v0.1 接受这一点，失联判断留出 2 倍余量（见第 5 节）。
+- 发送者身份靠首行和文件名声明。两侧可能使用同一个 git 账号，中转模式下必然如此，所以仓库本身不能防伪。
+- 防伪由 Global 负责：Global 保存自己发出的每条消息的副本，每次读取频道时，把所有 `from global` 的消息与副本逐字节比对，不一致就发 ISOLATION_REPORT。
+
+## 10. 兼容说明
+
+本契约生效前的 `0001-human-TASK.md` 和 `0002-local-REPORT.md` 按原样保留，不参与校验。
