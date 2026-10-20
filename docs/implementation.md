@@ -98,7 +98,8 @@ flowchart TB
 | lg-protect | lg-local | 受保护路径守卫：Local 不碰 Global 的目录 |
 | lg-patch-apply | lg-local | `lg_apply_patch`：校验并应用 Global 的补丁 |
 | lg-evidence | lg-local | `lg_evidence_add`、`lg_evidence_check`：写证据清单、标记过期 |
-| lg-scope | lg-global | 文件路径限定在工作区；拒绝执行类工具；网络不许指向本机和局域网 |
+| lg-scope | lg-global | 文件路径限定在工作区；拒绝执行类工具；网络按 allowlist，拒绝落在同步守卫上 |
+| lg-role | lg-global | 只读并注入 lg-global 自己的角色文件，不加载任何其他来源的指令 |
 | lg-repo | lg-global | `lg_repo_sync`、`lg_repo_log`、`lg_repo_diff`、`lg_repo_show` |
 | lg-directive | lg-global | `lg_directive`、`lg_draft_reset`、`lg_patch_send`、`lg_stop` |
 | lg-checkpoint | lg-global | 定时全局检查点；回合结束前检查未答问题 |
@@ -244,11 +245,11 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
             name: '@deepseek-ai/dsh-persona'
             config:
               prefix: You are Global, the judge in a Local-Global pair, powered by {{model}}.
-          - id: agent-instructions
-            name: '@deepseek-ai/dsh-agent-instructions'
+          # 不装 agent-instructions：它会把 Local 能写的文件当指令加载（见下文）
+          - id: lg-role
+            name: '@local-global/dsh-lg-global/role'
             config:
-              maxBytes: 65536
-              instructionFileCandidates: ['LG-ROLE.md']
+              roleFile: 'LG-ROLE.md'
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
             config: { read: true, readImage: true, write: true, edit: true }
@@ -274,9 +275,19 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
   disabled: true
 ```
 
-角色说明放在 Global 工作区根目录的 `LG-ROLE.md`，由 `agent-instructions` 每个会话加载。写权限只用于 Global 自己的草稿目录，由 lg-scope 限定。
+角色说明放在 Global 工作区根目录的 `LG-ROLE.md`，由 lg-global 自己的 `lg-role` 插件读取并注入。写权限只用于 Global 自己的草稿目录，由 lg-scope 限定。
 
-**关掉别的 preset 不等于切不过去。** bundle 的 patch 层在用户 patch 层之下，用户在 `cordis.patch.yml` 里重写 `agent-preset-registry.default` 就能把会话切回带 bash 的 standard。所以 preset 只负责“默认安全”，真正的保证由 lg-integrity 在启动时给出：它读取组合后的 preset 注册表，断言 `default` 是 `lg-global`、且没有其他 preset 处于启用状态，任何一条不成立就发 ISOLATION\_REPORT 并拒绝工作。
+**为什么不能直接用 `agent-instructions`。** 那个包会从三个 Local 能写的地方加载指令：
+
+1. `$DSH_AGENTS_HOME/AGENTS.md`（默认 `~/.agents`，与 `DSH_HOME` 无关，文件名固定）；
+2. 对 cwd 下某个文件执行 `read`/`write`/`edit` 之后，从 cwd 到该文件之间每一层目录里的候选文件——所以镜像里的 `AGENTS.md`、或者 Local 自己提交进仓库的 `LG-ROLE.md`，都会跟着进 Global 的上下文；
+3. `localInstructionFileCandidates` 默认的 `AGENTS.local.md` 与 `CLAUDE.local.md`。
+
+第三条路尤其致命：**被审的一方可以写下审核者的指令**。所以 Global 的指令只能有一个来源——lg-global 自己带的角色文件，其他来源一律不加载。`lg-role` 只读配置里那一个路径，读完即注入，不做目录发现、不接受候选列表。
+
+**关掉别的 preset 不等于切不过去。** bundle 的 patch 层在用户 patch 层之下：用户既能重写 `agent-preset-registry.default`，也能通过界面写入 `selectedDefault`，还能在会话第一轮之前调用远程方法 `select` 把会话切到任何**仍注册着**的 preset。所以断言 `defaultId` 挡不住——只要别的 preset 还在注册表里，界面就有办法切过去。
+
+真正的断言是**注册表里恰好只有 lg-global**：`list()` 只能返回一个条目、id 为 `lg-global`、且没有 `broken`；再用不带参数的 `inspectCompositions()` 核对已激活组合。任何一条不成立就发 ISOLATION\_REPORT 并拒绝工作。
 
 **lg-global 只能装进专用 profile。** 它会关掉所在 profile 里的 standard 等 preset，装进用户平时用的 profile 会让那个 profile 失去 bash。所以 lg-scope 启动时检查当前 profile 名，必须以 `lg-global` 开头（前缀可配置），否则拒绝启动并说明原因。profile 名从 dsh 的 `profileContext` 服务读取，具体字段以所用版本为准。
 
@@ -284,10 +295,13 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
 
 - **文件**：守卫检查 `read`、`read_image`、`write`、`edit`、`glob`、`grep` 的路径参数（`file_path` 或 `path`）。先按会话目录解析成绝对路径，再取真实路径，必须落在 Global 工作区内，否则拒绝。取真实路径是为了挡住 `..` 和符号链接逃逸。
 - **工具名**：`bash`、`pwsh`、`terminal_*`、`job_*`、`subagent*` 等执行类和派生类工具一律拒绝。preset 里本来就没有它们，这是第二道防线。
-- **网络**：在 `tools/pre-execute` 里检查 `web_fetch` 的目标，默认是 **allowlist**，名单可配置。放 pre-execute 而不是守卫里，是因为解析域名是异步的，守卫必须同步。
+- **网络**：默认 **allowlist**，名单可配置。检查分两段，**拒绝必须落在同步守卫上**：
+  - `tools/pre-execute` 只做异步准备：解析目标域名，把结论按 `callId` 记进本次调用的检查表。
+  - `ctx.tools.guard` 做最终判定，并且 **fail-closed**：先按 `callId` 取检查表，**取不到就拒绝**（`lg-scope: no network verdict for this call`），取到 deny 就拒绝，取到 allow 才放行。
+  - 为什么不能只靠 pre-execute：它是 waterfall，任何一个监听器都可以 `prepend` 到最前面、直接返回 `allow` 而不调用 `next()`，后面的监听器（包括本插件）就再也不运行；守卫只在 waterfall 结果是 `allow` 之后才运行，而且一旦拒绝，任何监听器都无法翻回来。把“拒绝”放在 pre-execute 等于把决定权交给最先注册的插件。
   - 只允许 `http` 和 `https`；`file://`、`ftp://`、`data:` 等其他协议一律拒绝。
   - 比对的是**解析后的地址**与声明的域名两者：域名必须在名单里，解析结果也不能落在本机、局域网或链路本地地址（127.0.0.0/8、::1、10.0.0.0/8、172.16.0.0/12、192.168.0.0/16、169.254.0.0/16 等）。
-  - 能做到的只有一种办法：**在 `tools/pre-execute` 里先解析域名，要求解析结果不是私有地址，同时要求域名在名单内**。`web_fetch` 是 dsh 自带的工具，pre-execute 拿不到它的 socket，也就无法把解析结果固定下来，所以“固定解析结果再请求”这一条做不到，不写进方案。剩下的 DNS rebinding 时间窗只对**用户自己加进名单的域名**成立；默认名单里全是 GitHub 控制的域名，攻击者改不了它们的解析。
+  - pre-execute 里解析域名，要求解析结果不是私有地址；守卫再确认域名在名单内。`web_fetch` 是 dsh 自带的工具，pre-execute 拿不到它的 socket，无法把解析结果固定下来，所以“先固定解析再请求”这一条做不到，不写进方案。剩下的 DNS rebinding 时间窗只对**用户自己加进名单的域名**成立；默认名单里全是 GitHub 控制的域名，攻击者改不了它们的解析。
   - 默认名单（可覆盖）：`github.com`、`api.github.com`、`raw.githubusercontent.com`、`codeload.github.com`、`objects.githubusercontent.com`、`gist.github.com`、`gist.githubusercontent.com`。这张表只覆盖“读 GitHub 上的公开仓库内容”，模型 API 走适配器自己的网络，不经过 `web_fetch`。
 
 **lg-repo：Global 读仓库的唯一途径**
@@ -323,10 +337,10 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
 
 **lg-integrity：Global 的自检**
 
-启动时和每次 `lg_repo_sync` 时执行：
+启动时、每个会话的第一次工具调用之前、以及每次 `lg_repo_sync` 时执行。会话级的这一次不能省：注册表在会话创建之后仍可能被界面改写。
 
-1. **枚举工具白名单**：列出 Global 会话当前可见的全部工具，与配置的白名单（`read`、`read_image`、`write`、`edit`、`glob`、`grep`、`web_fetch`、`web_search`、`lg_*`）逐一比对。`present` 不在白名单里：Global 的 preset 不装它，而它接受路径参数、又不在 lg-scope 的路径守卫范围内，收进来等于开一个绕过路径检查的口子。出现白名单以外的名字，就发 ISOLATION\_REPORT 并暂停工作。这是规则层内堵住“用户 patch 加回 bash”的主要手段——不看配置怎么写，只看会话实际能调到什么。
-2. **断言 preset**：`agent-preset-registry.default` 必须是 `lg-global`，且没有其他 preset 处于启用状态。
+1. **枚举工具白名单**：列出 Global 会话当前可见的全部工具，与配置的白名单（`read`、`read_image`、`write`、`edit`、`glob`、`grep`、`web_fetch`、`web_search`、`working_directory`、`lg_*`）逐一比对。`present` 不在白名单里：Global 的 preset 不装它，而它接受路径参数、又不在 lg-scope 的路径守卫范围内，收进来等于开一个绕过路径检查的口子。出现白名单以外的名字，就发 ISOLATION\_REPORT 并暂停工作。这是规则层内堵住“用户 patch 加回 bash”的主要手段——不看配置怎么写，只看会话实际能调到什么。
+2. **断言注册表**：`list()` 必须恰好只有一个条目、id 为 `lg-global`、没有 `broken`；`inspectCompositions()` **不带参数**调用，核对已激活组合与配置一致。只断言 `defaultId` 不够——`select` 是远程方法，界面能在会话第一轮之前把会话切到任何一个仍注册着的 preset。
 3. **组合哈希**：对 `--dump-config` 的**解析结果**（不是 profile 文件）算哈希，与上次比对。文件没变而 bundle 版本变了，也要能发现。
 4. **负向自测**：用 lg-scope 的规则尝试读 Local 的工作目录、访问本机地址、对镜像 push，三者都必须失败。
 5. **副本比对**：把频道里所有 from global 的消息与 Global 自己保存的发送副本逐字节比对，不一致就发 ISOLATION\_REPORT。
