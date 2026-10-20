@@ -1,0 +1,97 @@
+{
+  "presetRegistry": {
+    "service": {
+      "kind": "object",
+      "keys": [
+        "ctx",
+        "name",
+        "typertRemote",
+        "config",
+        "owner",
+        "definitions",
+        "generations",
+        "bindings",
+        "switches"
+      ]
+    },
+    "methods": [
+      "@deepseek-ai/dsh-typert-protocol/remote-methods",
+      "acquireScope",
+      "activate",
+      "bind",
+      "collect",
+      "composeFrom",
+      "composedPreset",
+      "compositionInventory",
+      "defaultId",
+      "diagnostic",
+      "generationFor",
+      "inspectCompositions",
+      "join",
+      "list",
+      "mount",
+      "readDocument",
+      "recompose",
+      "register",
+      "remoteExportList",
+      "resolve",
+      "retain",
+      "select",
+      "serviceFor"
+    ],
+    "defaultId": "standard",
+    "config": {
+      "default": "standard",
+      "selectedDefault": {}
+    }
+  },
+  "presetList": [
+    {
+      "id": "standard",
+      "broken": null
+    },
+    {
+      "id": "ptc",
+      "broken": null
+    },
+    {
+      "id": "minimal",
+      "broken": null
+    },
+    {
+      "id": "cordis",
+      "broken": null
+    }
+  ],
+  "presetInspect": [],
+  "toolOk": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "ok"
+      }
+    ],
+    "value": "ok"
+  },
+  "toolDenied": {
+    "isError": true,
+    "error": {
+      "message": "probe guard denies this tool"
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "Error: probe guard denies this tool"
+      }
+    ]
+  },
+  "ordering": [
+    "pre-execute:probe_ok",
+    "guard:probe_ok",
+    "execute:probe_ok",
+    "pre-execute:probe_deny",
+    "guard:probe_deny"
+  ],
+  "instructionRow": "loader not reachable"
+}

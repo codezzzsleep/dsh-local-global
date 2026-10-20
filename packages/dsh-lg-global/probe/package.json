@@ -1,0 +1,9 @@
+{
+  "name": "@local-global/lg-m2-probe",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "engines": { "dsh": ">=0.2.1-rc.2 <0.3.0" }
+}
