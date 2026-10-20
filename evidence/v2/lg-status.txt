@@ -1,0 +1,14 @@
+# /lg-bind 与 /lg-status 的界面输出（Human 在 Web 界面执行后粘贴）
+
+$ /lg-bind
+bound session session-51cfb27a-442a-4aad-a510-a037f8b226eb as local
+
+$ /lg-status
+repo: git@github.com:codezzzsleep/local-global-channel.git#main
+role: local
+bound session: session-51cfb27a-442a-4aad-a510-a037f8b226eb
+cursor: 0018
+channel max: 0018
+directive: v1 (#0005)
+open questions: (none)
+halted: false

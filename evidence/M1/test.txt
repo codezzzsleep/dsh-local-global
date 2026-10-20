@@ -7,11 +7,11 @@ $ dsh --version
 
 $ pnpm install
 Scope: all 3 workspace projects
-✓ Lockfile passes supply-chain policies (verified 1m ago)
+✓ Lockfile passes supply-chain policies (verified 10m ago)
 Lockfile is up to date, resolution step is skipped
 Already up to date
 
-Done in 896ms using pnpm v11.28.5
+Done in 913ms using pnpm v11.28.5
 
 $ pnpm -r build
 Scope: 2 of 3 workspace projects
@@ -24,35 +24,35 @@ $ vitest run
 
  RUN  v3.2.7 /var/lib/deepseek-harness/GlobalAndLocalAgent/dsh-local-global/packages/lg-protocol
 
- ✓ test/format.test.ts (6 tests) 17ms
- ✓ test/fold.test.ts (11 tests) 20ms
- ✓ test/validate.test.ts (31 tests) 60ms
- ✓ test/seq.test.ts (7 tests) 5ms
+ ✓ test/format.test.ts (6 tests) 19ms
+ ✓ test/fold.test.ts (11 tests) 24ms
+ ✓ test/validate.test.ts (31 tests) 66ms
  ✓ test/parse.test.ts (6 tests) 17ms
+ ✓ test/seq.test.ts (7 tests) 5ms
 
  Test Files  5 passed (5)
       Tests  61 passed (61)
-   Start at  01:35:41
-   Duration  628ms (transform 161ms, setup 0ms, collect 521ms, tests 119ms, environment 1ms, prepare 328ms)
+   Start at  01:44:35
+   Duration  628ms (transform 166ms, setup 0ms, collect 512ms, tests 131ms, environment 1ms, prepare 324ms)
 
 $ vitest run
 
  RUN  v3.2.7 /var/lib/deepseek-harness/GlobalAndLocalAgent/dsh-local-global/packages/dsh-lg-common
 
- ✓ test/channel-runtime.test.ts (4 tests) 343ms
- ✓ test/git-channel.test.ts (5 tests) 517ms
+ ✓ test/git-channel.test.ts (5 tests) 477ms
+ ✓ test/channel-runtime.test.ts (6 tests) 587ms
 
  Test Files  2 passed (2)
-      Tests  9 passed (9)
-   Start at  01:35:42
-   Duration  847ms (transform 133ms, setup 0ms, collect 275ms, tests 860ms, environment 0ms, prepare 124ms)
+      Tests  11 passed (11)
+   Start at  01:44:36
+   Duration  944ms (transform 142ms, setup 0ms, collect 267ms, tests 1.06s, environment 0ms, prepare 133ms)
 
 
 ## 结果
 
 - `pnpm install`：无 `ERR_PNPM_IGNORED_BUILDS`、无警告，esbuild 的 postinstall 正常执行。
 - `pnpm -r build`：两个包各跑一次 `tsc`，无错误。
-- `pnpm -r test`：**70 个用例全部通过**（lg-protocol 61 + dsh-lg-common 9），0 失败，0 跳过。
+- `pnpm -r test`：**72 个用例全部通过**（lg-protocol 61 + dsh-lg-common 11），0 失败，0 跳过。
 
 ## 负测与 0005“测试要求”的对应（AC-2）
 
@@ -67,18 +67,19 @@ $ vitest run
 | 7 | 批准登记进 consumed_approvals 后不可再用 | `packages/lg-protocol/test/fold.test.ts` › `foldState — approvals` › drops the approval once a REPORT registers it in consumed_approvals |
 | 集成 | 两个写入者同时向同一 bare 仓库写消息 | `packages/dsh-lg-common/test/git-channel.test.ts` › `ChannelRepo` › lets two independent writers push concurrently without a lost or duplicate sequence |
 
-## 0014 REVIEW 带来的新增负测
+## 后续 REVIEW 带来的新增负测
 
 | Finding | 用例 |
 |---|---|
-| F-6 | `packages/lg-protocol/test/fold.test.ts` › `foldState — REVIEW findings` › does not resolve another REVIEW that reuses the same finding id（0011/F-1 已解决，0014/F-1 仍阻塞） |
-| F-5 | `packages/dsh-lg-common/test/channel-runtime.test.ts` › `commit identity` › uses the machine git identity, not the message sender |
-| F-10 | `packages/dsh-lg-common/test/channel-runtime.test.ts` › `ChannelRuntime.recordRelayed` › archives a message whose fields it cannot validate, and lets readers mark it INVALID |
+| F-6 | `fold.test.ts` › `foldState — REVIEW findings` › does not resolve another REVIEW that reuses the same finding id |
+| F-5 | `channel-runtime.test.ts` › `commit identity` › uses the machine git identity, not the message sender |
+| F-10 | `channel-runtime.test.ts` › `ChannelRuntime.recordRelayed` › archives a message whose fields it cannot validate, and lets readers mark it INVALID |
+| AC-1（DIRECTIVE v2） | `channel-runtime.test.ts` › `bind` › starts the cursor at the newest message so history never enters the session；keeps the cursor when another session rebinds |
 
 ## 关于 test/fixtures.ts（F-3）
 
-`fixtures.ts` 现在只导出夹具（`VALID_FIELDS`、`PRIMARY_SENDER`、`makeMessage`），不再包含任何用例。此前它同时承载了 parse 用例，而它被三个测试文件 import，导致这 6 个用例被重复收集三次——旧 test.txt 里 `format.test.ts (12 tests)` 这类偏大的数字就是这么来的。拆到 `parse.test.ts` 后每个用例只跑一次。
+`fixtures.ts` 现在只导出夹具，不再包含用例。此前它被三个测试文件 import，里面的 6 个 parse 用例被重复收集三次——旧 test.txt 里 `format.test.ts (12 tests)` 这类偏大的数字就是这么来的。
 
 ## 测试为什么不再依赖构建产物
 
-`packages/dsh-lg-common/vitest.config.ts` 把 `@local-global/lg-protocol` 别名到 `../lg-protocol/src/index.ts`。没有这条别名时，测试会悄悄用到旧的 `lib/`：第一次跑 REVIEW 用例时，协议库还没重新构建，`REVIEW` 被判成 `unknown-type`，测试却以一种误导性的方式失败。
+`packages/dsh-lg-common/vitest.config.ts` 把 `@local-global/lg-protocol` 别名到 `../lg-protocol/src/index.ts`，否则测试会悄悄用到旧的 `lib/`。

@@ -96,10 +96,22 @@ export class ChannelRuntime {
 
   /**
    * Bind the session that channel messages are delivered to.
+   *
+   * The first bind starts the cursor at the channel's newest message, so a
+   * session never receives the history that accumulated before it joined. A
+   * later bind (another session on the same side) keeps the cursor and so
+   * neither replays nor drops anything.
    * @param sessionId - session identity of the invoking agent.
    */
   async bind(sessionId: string): Promise<void> {
-    await this.persist({ boundSessionId: sessionId })
+    const patch: { boundSessionId: string; cursor?: string } = { boundSessionId: sessionId }
+    if (this.state.boundSessionId === null) {
+      await this.repo.fetch()
+      const messages = await this.all()
+      const newest = messages.at(-1)
+      if (newest !== undefined) patch.cursor = newest.seq
+    }
+    await this.persist(patch)
   }
 
   /** The live agent this side delivers to, when the bound session is running. */

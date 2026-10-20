@@ -91,3 +91,26 @@ describe('commit identity', () => {
     expect(stdout.trim()).toBe('Machine User|machine@example.com|Machine User')
   })
 })
+
+describe('bind', () => {
+  it('starts the cursor at the newest message so history never enters the session', async () => {
+    const channel = await runtime()
+    await channel.post({ type: 'CLAIM', fields: { scope: [], implementer: 'local' } })
+    await channel.postAs('human', { type: 'HALT', fields: { reason: 'seed' } })
+
+    expect(channel.cursor).toBe('0000')
+    await channel.bind('session-1')
+    expect(channel.boundSessionId).toBe('session-1')
+    expect(channel.cursor).toBe('0002')
+  })
+
+  it('keeps the cursor when another session rebinds', async () => {
+    const channel = await runtime()
+    await channel.post({ type: 'CLAIM', fields: { scope: [], implementer: 'local' } })
+    await channel.bind('session-1')
+    await channel.post({ type: 'CLAIM', fields: { scope: [], implementer: 'local' } })
+    // The later message arrived while bound, so a rebind must not skip it.
+    await channel.bind('session-2')
+    expect(channel.cursor).toBe('0001')
+  })
+})
