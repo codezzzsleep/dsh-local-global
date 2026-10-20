@@ -293,7 +293,11 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
 
 **lg-scope：文件与网络的范围**
 
-- **文件**：守卫检查 `read`、`read_image`、`write`、`edit`、`glob`、`grep` 的路径参数（`file_path` 或 `path`）。先按会话目录解析成绝对路径，再取真实路径，必须落在 Global 工作区内，否则拒绝。取真实路径是为了挡住 `..` 和符号链接逃逸。
+- **文件**：守卫检查 `read`、`read_image`、`write`、`edit`、`glob`、`grep`、`working_directory` 的路径参数（`file_path`、`path` 或 `cd`）。
+  - **按工具的实际解析方式判断**：相对路径以**会话工作目录**为基准，不是以 workspace 为基准。守卫与 `dsh-tool-fs` 用同一个基准，否则同一串相对路径在两边指向不同文件，守卫放行、工具却读到外面去。
+  - `glob` 与 `grep` 不带 `path` 时，搜索根是**会话工作目录**。守卫把“没有 path”当成“目标是 cwd”，照常校验，而不是直接放行。
+  - 取真实路径是为了挡住 `..` 和符号链接逃逸。
+  - 这些规则只有在“会话工作目录就是 workspace”时才闭合，所以 lg-integrity 在会话第一次工具调用之前断言二者相等（见下），不等就进入暂停状态。
 - **工具名**：`bash`、`pwsh`、`terminal_*`、`job_*`、`subagent*` 等执行类和派生类工具一律拒绝。preset 里本来就没有它们，这是第二道防线。
 - **网络**：默认 **allowlist**，名单可配置。检查分两段，**拒绝必须落在同步守卫上**：
   - `tools/pre-execute` 只做异步准备：解析目标域名，把结论按 `callId` 记进本次调用的检查表。
@@ -313,14 +317,19 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
 | `lg_repo_diff` | 两个 commit 之间的 diff，可按路径过滤 |
 | `lg_repo_show` | 读某个 commit 下的某个文件 |
 
-远端可以是 GitHub（只读凭据），也可以是本机的 bare 仓库（`file://` 路径）。插件里没有任何 push 代码路径，但仍要把“推不上去”做成事实而不是约定：
+远端只能是**匿名只读**路径：公开仓库用 `https://`，或本机 bare 仓库用 `file://`。Global 的 git 不得复用 Local 的凭据——同一个用户下，SSH key、ssh-agent 和 credential helper 正是 Local push 用的那一套，原样继承 `process.env` 等于把写权限交给 Global：
+
+- `runGit` 不再继承整个环境，只传白名单变量（`PATH` 等），并显式设置 `GIT_TERMINAL_PROMPT=0`、`GIT_ASKPASS=/bin/false`、`GIT_CONFIG_NOSYSTEM=1`、`GIT_CONFIG_GLOBAL=/dev/null`、`GIT_SSH_COMMAND=/bin/false`，同时清掉 `SSH_AUTH_SOCK`；每次调用带 `-c credential.helper=`。
+- 远端只允许 `https://` 与 `file://`，`ssh://`、`git@…` 一律拒绝，从源头上不给它使用本机密钥的机会。
+
+插件里没有任何 push 代码路径，但仍要把“推不上去”做成事实而不是约定：
 
 - 建立镜像后立即把 `remote.origin.pushurl` 设成无效值（例如 `file:///dev/null`），让同一个 origin 想推也推不了。
 - 凭据只给只读权限：deploy key 只读，或 fine-grained token 只开 Contents: Read。
-- 启动探针实测：用镜像里配置的**真实远端地址**执行 `git push --dry-run <remote> HEAD:refs/heads/<branch>`，必须失败；成功就说明环境里混进了写凭据，发 ISOLATION\_REPORT 并拒绝工作。
+- 启动探针实测：在**临时仓库**里 `git init` 并提交一个空树，再对真实远端执行 `git push --dry-run <remote> HEAD:refs/heads/<branch>`。**不依赖镜像状态**——镜像首次启动时没有 HEAD，用镜像做探针只会得到“refspec 无效”，那是 `inconclusive`，证明不了任何事。
 - 判据是**失败原因**，不是“失败了”：
-  - 失败信息含权限类字样（`Permission denied`、`403`、`denied`、`read-only`）→ 通过。
-  - 失败原因是地址不可达、URL 非法、仓库不存在 → 判为**不确定**，探针报错并拒绝工作。先前的写法先把 `pushurl` 置成无效值再测，就属于这一类：它永远会“失败”，却证明不了没有写权限。
+  - 失败信息含权限类字样（`Permission denied`、`403`、`denied`、`read-only`、`could not read Username`）→ 通过。
+  - 失败原因是地址不可达、URL 非法、仓库不存在 → 判为**不确定**。按上面的暂停规则，`inconclusive` 与 `writable` 一样使 Global 停止工作。
 
 **lg-directive：Global 的写出口**
 
@@ -334,6 +343,16 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
 
 - 用 `ctx.schedule` 设一个固定间隔（默认 30 分钟，可配置），到点向 Global 会话投递“全局检查点”消息，要求回答三个问题并发到频道。
 - 监听 `agent/turn-stopping`：若还有未关闭的 QUESTION 或 OBJECTION，就 `steer` 一条提示，要求先答再结束。
+
+**检查失败必须阻断，而不只是记日志**
+
+lg-scope 与 lg-integrity 共享一个进程内状态 `lgState = { paused: boolean; reasons: string[] }`：lg-integrity 写，lg-scope 的守卫读。
+
+- 任何一项检查失败——注册表断言、组合核对、工具白名单、会话工作目录不等于 workspace、push 探针 `writable` 或 `inconclusive`、组合哈希不符——都把 `paused` 置为 `true` 并记下原因。
+- `paused` 期间，守卫拒绝**除 `lg_integrity_check` 之外的全部工具调用**，拒绝理由带上第一条失败原因。Global 因此真的“停止工作”，而不是只在日志里留一行。
+- 只有复核通过才解除暂停。`lg_integrity_check` 始终可用，否则无法观察和恢复。
+
+注意：在 `apply()` 里抛异常只能让 lg-integrity 自己加载失败，Global 的其他工具照常可用，所以不能靠抛异常表达“拒绝工作”。启动期的致命错误（profile 名不符）仍可以抛，因为它要在 profile 起不来时就暴露；运行期的所有检查一律走暂停状态。
 
 **lg-integrity：Global 的自检**
 
@@ -455,10 +474,9 @@ Human 把任务交给 Local：中转模式下由 Local 用 `lg_record_relayed` �
     - id: lg-repo
       name: '@local-global/dsh-lg-global/repo'
       config:
-        remote: 'https://github.com/<owner>/<repo>.git'   # 或 file:///path/to/remote.git
+        remote: 'https://github.com/<owner>/<repo>.git'   # 匿名只读；或 file:///path/to/remote.git
         branch: main
-        tokenEnv: LG_REPO_READ_TOKEN      # 只读凭据；pushurl 由插件置空
-        denyPush: true                    # 启动探针会实测 push 必须失败
+        # 不接受 tokenEnv / sshKey：Global 的 git 不带任何凭据，见“lg-repo”一节
     - id: lg-checkpoint
       name: '@local-global/dsh-lg-global/checkpoint'
       config:
