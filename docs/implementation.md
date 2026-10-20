@@ -301,11 +301,11 @@ lg-global bundle 的 `cordis.patch.yml` 声明这个 preset，把它设为默认
 - **工具名**：`bash`、`pwsh`、`terminal_*`、`job_*`、`subagent*` 等执行类和派生类工具一律拒绝。preset 里本来就没有它们，这是第二道防线。
 - **网络**：默认 **allowlist**，名单可配置。检查分两段，**拒绝必须落在同步守卫上**：
   - `tools/pre-execute` 只做异步准备：解析目标域名，把结论按 `callId` 记进本次调用的检查表。
-  - `ctx.tools.guard` 做最终判定，并且 **fail-closed**：先按 `callId` 取检查表，**取不到就拒绝**（`lg-scope: no network verdict for this call`），取到 deny 就拒绝，取到 allow 才放行。
+  - `ctx.tools.guard` 做最终判定，并且 **fail-closed**：按 `callId` 取结论，并**重新读一次本次调用的 `url` 参数与结论里的 `url` 比对**——只有三者（同一个 `callId`、同一个 `url`、结论为 allow）同时成立才放行。取不到结论、`url` 被改写、或结论为 deny，一律拒绝。没有这一步，排在后面的监听器改掉 `url` 就能把目标换成一个被检查过的地址。
   - 为什么不能只靠 pre-execute：它是 waterfall，任何一个监听器都可以 `prepend` 到最前面、直接返回 `allow` 而不调用 `next()`，后面的监听器（包括本插件）就再也不运行；守卫只在 waterfall 结果是 `allow` 之后才运行，而且一旦拒绝，任何监听器都无法翻回来。把“拒绝”放在 pre-execute 等于把决定权交给最先注册的插件。
   - 只允许 `http` 和 `https`；`file://`、`ftp://`、`data:` 等其他协议一律拒绝。
   - 比对的是**解析后的地址**与声明的域名两者：域名必须在名单里，解析结果也不能落在本机、局域网或链路本地地址（127.0.0.0/8、::1、10.0.0.0/8、172.16.0.0/12、192.168.0.0/16、169.254.0.0/16 等）。
-  - pre-execute 里解析域名，要求解析结果不是私有地址；守卫再确认域名在名单内。`web_fetch` 是 dsh 自带的工具，pre-execute 拿不到它的 socket，无法把解析结果固定下来，所以“先固定解析再请求”这一条做不到，不写进方案。剩下的 DNS rebinding 时间窗只对**用户自己加进名单的域名**成立；默认名单里全是 GitHub 控制的域名，攻击者改不了它们的解析。
+  - pre-execute 里解析域名，要求解析结果不是私有地址；守卫再确认域名在名单内。**“解析结果落在私有地址”必须单独可验**：验收里放一个解析到 `127.0.0.1` 的域名并把它加进 `allowDomains`，仍然必须被拒——否则这条规则永远只是理论上存在。`web_fetch` 是 dsh 自带的工具，pre-execute 拿不到它的 socket，无法把解析结果固定下来，所以“先固定解析再请求”这一条做不到，不写进方案。剩下的 DNS rebinding 时间窗只对**用户自己加进名单的域名**成立；默认名单里全是 GitHub 控制的域名，攻击者改不了它们的解析。
   - 默认名单（可覆盖）：`github.com`、`api.github.com`、`raw.githubusercontent.com`、`codeload.github.com`、`objects.githubusercontent.com`、`gist.github.com`、`gist.githubusercontent.com`。这张表只覆盖“读 GitHub 上的公开仓库内容”，模型 API 走适配器自己的网络，不经过 `web_fetch`。
 
 **lg-repo：Global 读仓库的唯一途径**
@@ -352,7 +352,20 @@ lg-scope 与 lg-integrity 共享一个进程内状态 `lgState = { paused: boole
 - `paused` 期间，守卫拒绝**除 `lg_integrity_check` 之外的全部工具调用**，拒绝理由带上第一条失败原因。Global 因此真的“停止工作”，而不是只在日志里留一行。
 - 只有复核通过才解除暂停。`lg_integrity_check` 始终可用，否则无法观察和恢复。
 
-注意：在 `apply()` 里抛异常只能让 lg-integrity 自己加载失败，Global 的其他工具照常可用，所以不能靠抛异常表达“拒绝工作”。启动期的致命错误（profile 名不符）仍可以抛，因为它要在 profile 起不来时就暴露；运行期的所有检查一律走暂停状态。
+注意：在 `apply()` 里抛异常只能让 lg-integrity 自己加载失败，Global 的其他工具照常可用，所以不能靠抛异常表达“拒绝工作”。**启动期的致命错误也不抛**——一律进暂停状态，理由是抛异常时 dsh 只记一条 warning，随后照常提供 Web 界面（实测：`negative-profile-name.log`）。
+
+触发暂停的完整清单：
+
+1. 注册表断言失败（不是恰好一个 `lg-global`，或出现 `broken`）；
+2. 组合核对失败（`inspectCompositions()` 与配置不符）；
+3. 会话可见工具里有白名单以外的名字；
+4. 会话工作目录不等于 workspace；
+5. push 探针为 `writable` 或 `inconclusive`；
+6. 组合哈希与上次不一致。
+
+暂停期间守卫的行为：**除 `lg_integrity_check` 外的任何工具调用都被拒绝**，拒绝理由 `lg-global paused: <第一条失败原因>`。复核通过后解除。
+
+验收要求：N8 到 N11 的证据必须显示一次**真实的工具调用被拒**（带错误文本），而不是只显示一条 `FAIL` 记录。
 
 **lg-integrity：Global 的自检**
 
