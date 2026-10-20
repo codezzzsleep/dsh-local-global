@@ -1,0 +1,10 @@
+=== 1. 同步前的镜像 HEAD（与远端一致）===
+787f1908c68aef2a98c8d951bf32f7db9b7fe3fa
+=== 2. 手工篡改：把镜像 main 指向 HEAD~1 ===
+478bd09184b4193890be819552f21f6130636011
+=== 3. 远端 HEAD ===
+787f1908c68aef2a98c8d951bf32f7db9b7fe3fa
+=== 4. 调用 lg_repo_sync 之后的镜像 HEAD ===
+787f1908c68aef2a98c8d951bf32f7db9b7fe3fa
+=== 5. lg_repo_sync 的返回 ===
+mirror 787f1908c68a / remote 787f1908c68a (equal)

@@ -14,7 +14,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-tools'
 
 /** Tools that read or write through a path argument. */
-export const PATH_TOOLS = ['read', 'read_image', 'write', 'edit', 'glob', 'grep'] as const
+export const PATH_TOOLS = ['read', 'read_image', 'write', 'edit', 'glob', 'grep', 'working_directory'] as const
 
 /** Tool-name prefixes a Global session must never see, whatever the preset says. */
 export const DENIED_TOOL_PREFIXES = ['bash', 'pwsh', 'terminal', 'job_', 'subagent', 'task'] as const
@@ -126,7 +126,7 @@ export function hostAllowed(host: string, allowDomains: readonly string[]): bool
 export function pathArgument(args: unknown): string | undefined {
   if (typeof args !== 'object' || args === null) return undefined
   const record = args as Record<string, unknown>
-  for (const key of ['file_path', 'path', 'filePath']) {
+  for (const key of ['file_path', 'path', 'filePath', 'cd']) {
     const value = record[key]
     if (typeof value === 'string' && value.length > 0) return value
   }

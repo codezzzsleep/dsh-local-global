@@ -38,6 +38,7 @@ export const DEFAULT_ALLOWED_TOOLS = [
   'grep',
   'web_fetch',
   'web_search',
+  'working_directory',
   'lg_repo_sync',
   'lg_repo_log',
   'lg_repo_diff',
@@ -151,14 +152,24 @@ export function apply(ctx: Context, raw: RawIntegrityConfig): void {
     if (!result.pass) ctx.logger?.('lg-integrity')?.error?.(`lg-integrity: ${result.name} failed — ${result.detail}`)
   }
 
-  ctx.on('agent/created', (payload: { agent?: { ctx?: unknown } }) => {
-    try {
-      const agentCtx = payload.agent?.ctx
-      const schemas = agentCtx === undefined ? [] : ctx.tools.schemas(agentCtx as never)
-      remember(checkTools(schemas.map((schema) => schema.name), config.allowedTools))
-    } catch (error) {
-      remember({ name: 'tool-whitelist', pass: false, detail: error instanceof Error ? error.message : String(error) })
-    }
+  ctx.on('agent/created', () => {
+    // The preset's rows live in an isolated scope: `agent.ctx.tools` resolves to
+    // the host realm and sees only process-level tools. `acquireScope` returns
+    // the ScopeKey whose view includes the preset's own rows, which is the set a
+    // model in that session can actually call.
+    void (async () => {
+      try {
+        const lease = await ctx.agentPresets.acquireScope(config.expectedPreset)
+        try {
+          const schemas = ctx.tools.schemas(lease.key as never)
+          remember(checkTools(schemas.map((schema) => schema.name), config.allowedTools))
+        } finally {
+          await (lease as unknown as { [Symbol.asyncDispose]?: () => Promise<void> })[Symbol.asyncDispose]?.()
+        }
+      } catch (error) {
+        remember({ name: 'tool-whitelist', pass: false, detail: error instanceof Error ? error.message : String(error) })
+      }
+    })()
     return undefined
   })
 

@@ -7,6 +7,7 @@
     remote: 'git@github.com:codezzzsleep/dsh-local-global.git'
     branch: main
     mirrorDir: '/var/lib/deepseek-harness/.dsh-global-m2/workspace/repo.git'
+    sshKeyPath: '/var/lib/deepseek-harness/.dsh-global-m2/keys/repo-readonly'
 - id: lg-integrity
   config:
     expectedPreset: lg-global

@@ -21,6 +21,8 @@ export interface RepoConfig {
   readonly branch: string
   /** Bare mirror directory. */
   readonly mirrorDir: string
+  /** Optional SSH key the mirror must use; keeps the harness key out of reach. */
+  readonly sshKeyPath?: string
 }
 
 /** Raw plugin config. */
@@ -29,6 +31,7 @@ export interface RawRepoConfig {
   readonly branch?: unknown
   readonly mirrorDir?: unknown
   readonly workspace?: unknown
+  readonly sshKeyPath?: unknown
 }
 
 /** One git invocation result. */
@@ -88,7 +91,8 @@ export function resolveRepoConfig(raw: RawRepoConfig): RepoConfig {
   const base = typeof raw.workspace === 'string' ? resolvePath(raw.workspace) : process.cwd()
   const mirrorDir = raw.mirrorDir === undefined ? join(base, 'repo.git') : resolvePath(String(raw.mirrorDir))
   if (!isAbsolute(mirrorDir)) throw new TypeError('lg-repo: "mirrorDir" must be absolute')
-  return { remote: raw.remote, branch, mirrorDir }
+  const sshKeyPath = raw.sshKeyPath === undefined ? undefined : resolvePath(String(raw.sshKeyPath))
+  return { remote: raw.remote, branch, mirrorDir, ...(sshKeyPath === undefined ? {} : { sshKeyPath }) }
 }
 
 /** Outcome of the write-capability probe. */
@@ -99,7 +103,16 @@ export interface PushProbe {
   readonly detail: string
 }
 
-const PERMISSION_MARKERS = [/permission denied/i, /403/, /\bdenied\b/i, /read[- ]only/i, /not authorized/i, /authentication failed/i]
+const PERMISSION_MARKERS = [
+  /permission denied/i,
+  /403/,
+  /\bdenied\b/i,
+  /read[- ]only/i,
+  /not authorized/i,
+  /authentication failed/i,
+  /could not read (username|password)/i,
+  /terminal prompts disabled/i,
+]
 
 /**
  * Prove the configured credentials cannot write to the real remote.
@@ -142,6 +155,14 @@ export class RepoMirror {
       // Defense in depth: even a code path that tried to push through origin
       // would hit an unusable URL. The probe below deliberately bypasses it.
       await runGit(['remote', 'set-url', '--push', 'origin', 'file:///dev/null'], { cwd: this.config.mirrorDir })
+    }
+    // Keep the mirror pointed at the configured remote even if it was created
+    // under an earlier configuration.
+    await runGit(['remote', 'set-url', 'origin', this.config.remote], { cwd: this.config.mirrorDir }).catch(() => {})
+    await runGit(['remote', 'set-url', '--push', 'origin', 'file:///dev/null'], { cwd: this.config.mirrorDir }).catch(() => {})
+    if (this.config.sshKeyPath !== undefined) {
+      const ssh = `ssh -i ${this.config.sshKeyPath} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new`
+      await runGit(['config', 'core.sshCommand', ssh], { cwd: this.config.mirrorDir })
     }
   }
 
