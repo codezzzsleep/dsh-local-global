@@ -1,0 +1,10 @@
+- insert:
+    - id: lg-channel
+      name: '@local-global/dsh-lg-common/channel'
+      config:
+        repo: 'file:///tmp/lg-m1-channel.git'
+        role: local
+        pollSeconds: 10
+        relay: true
+    - id: lg-commands
+      name: '@local-global/dsh-lg-common/commands'

@@ -1,0 +1,9 @@
+packages:
+  - 'packages/*'
+
+# esbuild ships a postinstall step; vitest depends on it. pnpm 11 takes the
+# allowlist as `allowBuilds` (a map, not the older `onlyBuiltDependencies`
+# list), so approving it here keeps `pnpm install` and `pnpm -r test` free of
+# ERR_PNPM_IGNORED_BUILDS warnings.
+allowBuilds:
+  esbuild: true
