@@ -5,4 +5,4 @@ lg-integrity (@local-global/dsh-lg-global/integrity): Error: lg-integrity: this 
     at file:///opt/deepseek-harness/node_modules/@deepseek-ai/cordis/lib/index.js:1142:34
     at file:///var/lib/deepseek-harness/.dsh-global-m2/profiles/m2-wrong/#lg-integrity
     at file:///var/lib/deepseek-harness/.dsh-global-m2/profiles/m2-wrong/#include
-dsh web: http://127.0.0.1:3081/?token=fD7K1sLnVzd1OVSoM7x-6fxYdyzLcbIeFCQjsOfTqew
+dsh web: http://127.0.0.1:3081/?token=<REDACTED>

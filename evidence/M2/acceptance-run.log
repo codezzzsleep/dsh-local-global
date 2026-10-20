@@ -1,4 +1,4 @@
-dsh web: http://127.0.0.1:3076/?token=MUpZUW2w1sN25RSipHyWdcl00Ni4umQ3t-WQvcTMgBg
+dsh web: http://127.0.0.1:3076/?token=<REDACTED>
 [acceptance] mounted preset "lg-global"
 [acceptance] preset bound: lg-global
 [acceptance] N1 negative -> error: lg-scope: read path escapes the Global workspace: /var/lib/deepseek-harness/GlobalAndLocalAgent/调研-全局与局部Agent框架.md
