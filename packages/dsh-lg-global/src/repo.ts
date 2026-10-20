@@ -50,7 +50,7 @@ export interface GitResult {
  */
 export async function runGit(
   args: readonly string[],
-  options: { cwd?: string; input?: string; env?: Readonly<Record<string, string>> } = {},
+  options: { cwd?: string; input?: string; env?: Readonly<Record<string, string>>; timeoutMs?: number } = {},
 ): Promise<GitResult> {
   return await new Promise<GitResult>((resolve, reject) => {
     // A curated environment: inheriting process.env would hand Global the same
@@ -81,8 +81,17 @@ export async function runGit(
       stderr += chunk
     })
     child.stdin.on('error', () => {})
-    child.on('error', reject)
+    // A hanging remote must not hang the profile: every git call is bounded.
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL')
+      reject(new Error(`git ${args.join(' ')} timed out after ${String(options.timeoutMs ?? 60000)}ms`))
+    }, options.timeoutMs ?? 60000)
+    child.on('error', (error) => {
+      clearTimeout(timer)
+      reject(error)
+    })
     child.on('close', (code) => {
+      clearTimeout(timer)
       if (code === 0) resolve({ stdout, stderr })
       else reject(new Error(`git ${args.join(' ')} failed (exit ${String(code)}): ${(stderr || stdout).trim()}`))
     })
