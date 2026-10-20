@@ -1,10 +1,28 @@
-4803b212691480295d6b34d66c6de38bc995afd2 codezzzsleep <codezzzsleep@gmail.com> msg 0007 global DIRECTIVE
-5fd6d514c31f58f45af00c17e2a01e032e094472 codezzzsleep <codezzzsleep@gmail.com> msg 0006 human HALT
-0abe2be4bf6ca2ead5cdb9da004ffa520229e308 codezzzsleep <codezzzsleep@gmail.com> msg 0005 human HALT
-17b337cca6541eeff6fb62604276c92f87d6dbd3 codezzzsleep <codezzzsleep@gmail.com> msg 0004 global DIRECTIVE
-c181727f98a30c0cdb4204d41bc68427215b4cb4 codezzzsleep <codezzzsleep@gmail.com> msg 0003 local REPORT
-6481677e10bdb827e3eab7c9711f15a8bdcbc419 codezzzsleep <codezzzsleep@gmail.com> msg 0002 global DIRECTIVE
-8cd06ea50538e701dbfedcf6ad0c1bc299e83cbc codezzzsleep <codezzzsleep@gmail.com> msg 0001 human TASK
+# 测试频道提交日志
+
+运行代码：插件仓库 commit 89ede2834eca90adac54641e8fb702ba3cccd63e（F-4 至 F-10 修复之后的代码）
+频道配置：只来自 lg-m1 profile 的 cordis.patch.yml，见 evidence/M1/lg-m1-cordis.patch.yml
+
+$ git log --format="%an <%ae> %s" main
+codezzzsleep <codezzzsleep@gmail.com> msg 0007 global DIRECTIVE
+codezzzsleep <codezzzsleep@gmail.com> msg 0006 human HALT
+codezzzsleep <codezzzsleep@gmail.com> msg 0005 human HALT
+codezzzsleep <codezzzsleep@gmail.com> msg 0004 global DIRECTIVE
+codezzzsleep <codezzzsleep@gmail.com> msg 0003 local REPORT
+codezzzsleep <codezzzsleep@gmail.com> msg 0002 global DIRECTIVE
+codezzzsleep <codezzzsleep@gmail.com> msg 0001 human TASK
+
+# 同样的日志，带完整 SHA
+
+$ git log --format="%H %an <%ae> %s" main
+8a11436cd9c42b897fc6a7c19e66f214ed8fea93 codezzzsleep <codezzzsleep@gmail.com> msg 0007 global DIRECTIVE
+82104df1bf7c7054c007b98fece9d5794989e4d4 codezzzsleep <codezzzsleep@gmail.com> msg 0006 human HALT
+758775e9a12676a83db82022047b869c25cb6469 codezzzsleep <codezzzsleep@gmail.com> msg 0005 human HALT
+b9c5cc4a9791c4b2a7a39242ea732f9f16d92234 codezzzsleep <codezzzsleep@gmail.com> msg 0004 global DIRECTIVE
+eb83b462878ac6ccb4bbad1ef26415d0d94ea937 codezzzsleep <codezzzsleep@gmail.com> msg 0003 local REPORT
+033382bffebd1dc26061539c9bbbaefe5c044218 codezzzsleep <codezzzsleep@gmail.com> msg 0002 global DIRECTIVE
+bd8982c5a1a6791c9a28699abcab0da3d9371dee codezzzsleep <codezzzsleep@gmail.com> msg 0001 human TASK
+
 --- 0002 原文 ---
 [LG DIRECTIVE from global]
 version: 1
