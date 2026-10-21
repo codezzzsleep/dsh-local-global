@@ -14,10 +14,34 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve as resolvePath } from 'node:path'
-import { isInside, sessionCwd } from './scope.js'
+
 import { zstdDecompressSync } from 'node:zlib'
 
 import type { Context } from '@deepseek-ai/cordis'
+
+/**
+ * Read the session working directory from an agent.
+ *
+ * Deliberately local to this package: the evidence plugin is shared by both
+ * sides (dsh-lg-common), so it cannot import from dsh-lg-global's scope module.
+ * @param agent - the calling agent, when dsh exposes one.
+ * @returns the session working directory, or `undefined`.
+ */
+function sessionCwd(agent: unknown): string | undefined {
+  const session = (agent as { session?: Record<string, unknown> } | undefined)?.session
+  if (session === undefined) return undefined
+  const header = session['header'] as Record<string, unknown> | undefined
+  for (const candidate of [header?.['cwd'], session['cwd']]) {
+    if (typeof candidate === 'string' && candidate.length > 0) return candidate
+  }
+  return undefined
+}
+
+/** True when `child` is `parent` or lives under it. */
+function isInside(parent: string, child: string): boolean {
+  const base = parent.endsWith('/') ? parent : `${parent}/`
+  return child === parent || child.startsWith(base)
+}
 
 export const name = 'lg-evidence'
 export const inject = ['tools']

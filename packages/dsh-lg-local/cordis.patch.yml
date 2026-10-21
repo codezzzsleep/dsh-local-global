@@ -1,0 +1,8 @@
+# @local-global/dsh-lg-local
+#
+# Local-side plugins: evidence that is original, approval before C-class
+# actions, and hands off the two protected areas. They add capability and turn
+# nothing off, so this bundle is an ordinary row insert.
+- insert:
+    - id: lg-evidence
+      name: '@local-global/dsh-lg-local/evidence'

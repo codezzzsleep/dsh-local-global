@@ -14,7 +14,11 @@
       "types": "./lib/commands.d.ts",
       "default": "./lib/commands.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./evidence": {
+      "types": "./lib/evidence.d.ts",
+      "default": "./lib/evidence.js"
+    }
   },
   "files": [
     "lib/**/*.js",

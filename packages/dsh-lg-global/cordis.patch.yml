@@ -40,8 +40,9 @@
               searchTimeoutMs: 60000
           # Session-acceptance evidence is exported by the model itself, from
           # inside the sandbox: QA-4 wants the original events, not a summary.
+          # One implementation, shared with dsh-lg-local via dsh-lg-common.
           - id: lg-evidence
-            name: '@local-global/dsh-lg-global/evidence'
+            name: '@local-global/dsh-lg-common/evidence'
 
 - id: agent-preset-registry
   name: '@deepseek-ai/dsh-agent-preset-registry'
