@@ -63,6 +63,22 @@ export interface SentCopyMismatch {
   readonly reason: string
 }
 
+/**
+ * Whether a message wakes a Global session (SPEC "投递").
+ *
+ * Only these open a turn: a checkpoint REPORT, a blocking QUESTION, an
+ * OBJECTION, a TASK or a HALT. Everything else is injected as context without
+ * waking the driver (CH-4).
+ * @param message - the message about to be delivered.
+ * @returns true when the Global side must start a turn for it.
+ */
+export function wakesGlobal(message: ParsedMessage): boolean {
+  if (message.type === 'TASK' || message.type === 'HALT' || message.type === 'OBJECTION') return true
+  if (message.type === 'QUESTION' && message.fields['blocking'] === true) return true
+  if (message.type === 'REPORT' && message.fields['checkpoint'] === true) return true
+  return false
+}
+
 /** Live channel shared by `lg-channel` and `lg-commands` in one process. */
 export class ChannelRuntime {
   readonly ctx: Context
@@ -264,22 +280,46 @@ export class ChannelRuntime {
     if (text === undefined) return false
     const parsed = parseMessage(filename, text)
     if (!parsed.ok) {
-      this.inject(agent, `[LG INVALID #${seq}] ${parsed.errors.map((error) => error.message).join('; ')}`)
+      this.deliver(agent, `[LG INVALID #${seq}] ${parsed.errors.map((error) => error.message).join('; ')}`)
       return true
     }
     const errors = validateMessage(parsed.message)
     if (errors.length > 0) {
-      this.inject(agent, `[LG INVALID #${seq}] ${errors.map((error) => error.message).join('; ')}`)
+      this.deliver(agent, `[LG INVALID #${seq}] ${errors.map((error) => error.message).join('; ')}`)
       return true
     }
     if (parsed.message.sender === this.config.role) return false
+
+    // CH-9: an id already handed to the session is never delivered twice, even
+    // after a cursor reset or a restart.
+    const id = parsed.message.fields['id']
+    if (typeof id === 'string' && this.state.deliveredIds.includes(id)) return false
+
+    // CH-10: a superseded message is shown as superseded and must not be run.
+    const superseded = (await this.all()).flatMap((message) =>
+      Array.isArray(message.fields['supersedes'])
+        ? message.fields['supersedes'].filter((target): target is string => typeof target === 'string')
+        : [],
+    )
+    const dead = typeof id === 'string' && superseded.includes(id)
+    if (typeof id === 'string') await this.persist({ deliveredIds: [...this.state.deliveredIds, id] })
+    if (dead) {
+      this.deliver(agent, `[LG #${seq} ${parsed.message.type} SUPERSEDED by ${String(superseded.find((target) => target === id))}] 不要执行。\n${this.renderDelivery(parsed.message, text)}`)
+      return true
+    }
     if (parsed.message.type === 'HALT') {
       agent.cancel({ kind: 'user' })
-      this.inject(agent, this.renderDelivery(parsed.message, text))
+      this.deliver(agent, this.renderDelivery(parsed.message, text))
       await this.persist({ halted: true })
       return true
     }
-    this.inject(agent, this.renderDelivery(parsed.message, text))
+    // CH-4: the Global side only opens a turn for wake-class messages; anything
+    // else goes into the context without waking the driver.
+    if (this.config.role === 'global' && !wakesGlobal(parsed.message)) {
+      agent.inject(this.messageFor(this.renderDelivery(parsed.message, text)))
+      return true
+    }
+    this.deliver(agent, this.renderDelivery(parsed.message, text))
     return true
   }
 
@@ -291,7 +331,8 @@ export class ChannelRuntime {
   }
 
   /** Hand one user-role message to the agent: steer while it runs, follow up when idle. */
-  private inject(agent: Agent, body: string): void {
+  /** Build the frozen user message the agent inbox takes. */
+  private messageFor(body: string): UserMessage {
     // Built here rather than with dsh-llm's createUserMessage: the bundle keeps
     // no runtime dependency on the harness packages (the profile does not
     // install peer dependencies), so the only cast is the MessageId brand,
@@ -302,6 +343,12 @@ export class ChannelRuntime {
       content: Object.freeze([{ type: 'text' as const, text: body }]),
       source: { kind: 'user' as const },
     })
+    return message
+  }
+
+  /** Hand one user-role message to the agent: steer while it runs, follow up when idle. */
+  private deliver(agent: Agent, body: string): void {
+    const message = this.messageFor(body)
     if (agent.status === 'running') agent.steer(message)
     else agent.followup(message)
   }

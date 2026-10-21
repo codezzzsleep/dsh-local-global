@@ -163,3 +163,23 @@ describe('sent copies (CH-12 / IN-3)', () => {
     expect(await channel.uncopiedOwnMessages()).toEqual([])
   })
 })
+
+describe('wakesGlobal (CH-4)', () => {
+  it('wakes only on the wake-class messages', async () => {
+    const { parseMessage } = await import('@local-global/lg-protocol')
+    const { wakesGlobal } = await import('../src/channel.js')
+    const build = (name: string, text: string) => {
+      const parsed = parseMessage(name, text)
+      if (!parsed.ok) throw new Error(parsed.errors.map((e) => e.message).join('; '))
+      return parsed.message
+    }
+    const checkpoint = build('0026-local-REPORT.md', "[LG REPORT from local]\nrefs: ['0025']\ncommit: 0000000000000000000000000000000000000000\ndirective_version: 3\nevidence: []\nnegative_tests: []\ncheckpoint: true\n---\n")
+    const plain = build('0027-local-REPORT.md', "[LG REPORT from local]\nrefs: ['0025']\ncommit: 0000000000000000000000000000000000000000\ndirective_version: 3\nevidence: []\nnegative_tests: []\ncheckpoint: false\n---\n")
+    const blocking = build('0028-local-QUESTION.md', "[LG QUESTION from local]\noptions: ['a']\nblocking: true\ndefault_action: continue\n---\n")
+    const notBlocking = build('0029-local-QUESTION.md', "[LG QUESTION from local]\noptions: ['a']\nblocking: false\ndefault_action: continue\n---\n")
+    expect(wakesGlobal(checkpoint)).toBe(true)
+    expect(wakesGlobal(plain)).toBe(false)
+    expect(wakesGlobal(blocking)).toBe(true)
+    expect(wakesGlobal(notBlocking)).toBe(false)
+  })
+})

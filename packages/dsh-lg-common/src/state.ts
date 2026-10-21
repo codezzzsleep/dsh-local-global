@@ -16,6 +16,8 @@ export interface PersistedState {
   readonly cursor: string
   /** Session this side delivers to, once `/lg-bind` ran. */
   readonly boundSessionId: string | null
+  /** Ids already handed to the bound session, so a re-fetch never repeats one. */
+  readonly deliveredIds: string[]
   /** Set when a human HALT was delivered; polling stops for good. */
   readonly halted: boolean
   readonly updatedAt: string
@@ -23,7 +25,7 @@ export interface PersistedState {
 
 /** The state a fresh channel starts from. */
 export function initialState(repo: string, role: Role): PersistedState {
-  return { repo, role, cursor: '0000', boundSessionId: null, halted: false, updatedAt: new Date().toISOString() }
+  return { repo, role, cursor: '0000', boundSessionId: null, deliveredIds: [], halted: false, updatedAt: new Date().toISOString() }
 }
 
 /** Atomic JSON state file. */
@@ -49,6 +51,7 @@ export class StateStore {
         repo,
         role,
         cursor: typeof parsed.cursor === 'string' ? parsed.cursor : '0000',
+        deliveredIds: Array.isArray(parsed.deliveredIds) ? parsed.deliveredIds.filter((id): id is string => typeof id === 'string') : [],
         boundSessionId: typeof parsed.boundSessionId === 'string' ? parsed.boundSessionId : null,
         halted: parsed.halted === true,
         updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
