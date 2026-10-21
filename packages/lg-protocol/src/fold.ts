@@ -17,6 +17,10 @@ export interface ChannelState {
   readonly unresolvedFindings: readonly OpenFinding[]
   /** The most recent HALT, if any. */
   readonly halt?: ParsedMessage
+  /** Ids that some message's `supersedes` lists (SPEC "折叠状态"). */
+  readonly superseded: readonly string[]
+  /** Checkpoint REPORTs no Global message has referenced yet. */
+  readonly pendingCheckpoints: readonly ParsedMessage[]
   /** Highest sequence seen, or `0000` for an empty channel. */
   readonly lastSeq: string
 }
@@ -63,9 +67,23 @@ export function foldState(messages: readonly ParsedMessage[]): ChannelState {
   const grants: Approval[] = []
   const reviews: { review: string; finding: Finding }[] = []
   const resolved = new Set<string>()
+  const superseded: string[] = []
+  const referenced = new Set<string>()
+  const checkpoints: ParsedMessage[] = []
 
   for (const message of messages) {
     if (message.seq > lastSeq) lastSeq = message.seq
+    const ownId = message.fields['id']
+    const supersedes = message.fields['supersedes']
+    if (Array.isArray(supersedes)) {
+      for (const target of supersedes) if (typeof target === 'string') superseded.push(target)
+    }
+    // A Global message that names a checkpoint's seq (or id) in refs clears it.
+    if (message.sender === 'global') {
+      for (const ref of seqListField(message, 'refs')) referenced.add(ref)
+      if (typeof ownId === 'string') referenced.add(ownId)
+    }
+    if (message.type === 'REPORT' && message.fields['checkpoint'] === true) checkpoints.push(message)
     switch (message.type) {
       case 'DIRECTIVE': {
         if (directive === undefined || directiveVersion(message) >= directiveVersion(directive)) {
@@ -119,6 +137,11 @@ export function foldState(messages: readonly ParsedMessage[]): ChannelState {
     openQuestions: questions.filter((message) => !answered.has(message.seq)),
     unresolvedFindings: reviews.filter((entry) => !resolved.has(`${entry.review}/${entry.finding.id}`)),
     approvals: grants.filter((grant) => !consumed.has(grant.decision)),
+    superseded,
+    pendingCheckpoints: checkpoints.filter((message) => {
+      const id = message.fields['id']
+      return !referenced.has(message.seq) && !(typeof id === 'string' && referenced.has(id))
+    }),
     ...(halt === undefined ? {} : { halt }),
     lastSeq,
   }

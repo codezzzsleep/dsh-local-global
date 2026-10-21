@@ -41,10 +41,12 @@
 
 ## 4. 各类型的发送者与必填字段
 
+**所有类型**都可以带 `refs`、`id` 和 `supersedes`，下表的"可选字段"只列各类型自己的额外可选项。
+
 | 类型 | 允许的发送者 | 必填字段 | 可选字段 |
 | --- | --- | --- | --- |
 | TASK | human | `goal`、`constraints`、`budget` | — |
-| REPORT | local | `refs`、`commit`、`directive_version`、`evidence`、`negative_tests` | `open_questions`、`consumed_approvals` |
+| REPORT | local | `refs`、`commit`、`directive_version`、`evidence`、`negative_tests` | `open_questions`、`consumed_approvals`、`resolves`、`checkpoint`、`meanwhile` |
 | QUESTION | local | `options`、`blocking`、`default_action` | `action` |
 | DECISION | global | `answers`、`choice`、`reason` | `approve_action` |
 | DIRECTIVE | global | `version`、`goal`、`priorities`、`acceptance`、`scope` | — |
@@ -70,6 +72,11 @@
 - CORRECTION 只能更正自己发出的消息。
 - REVIEW 的 `verdict` 取 `accepted` 或 `changes-requested`；`findings` 是列表，每项为 `{id: F-<n>, severity: blocking 或 minor, text}`，`verdict` 为 `accepted` 时可以是空列表。
 - REPORT 的可选字段 `resolves` 列出已解决的 finding，写法是 `<REVIEW 序号>/F-<n>`，例如 `0011/F-1`。每条 REVIEW 的 finding 都从 F-1 起编，只写 `F-1` 会把别的 REVIEW 的同号 finding 一起算成已解决。正文需逐条说明解决方式。有 blocking 的 finding 未解决时，对应的工作项不算完成。
+  - 注意：v2 之前的消息用的是裸 `F-<n>` 形状。频道只追加，那些消息保持原样；本契约只管新消息。
+- `id`：v2 新增。形如 `G-0042`、`L-0107`、`H-0003`——发送方前缀加四位以上数字，由发送方在写消息时生成，按发送方各自递增、不重复。新写的消息必须带 `id`；没有 `id` 的旧消息按序号处理，不判为非法。
+- `supersedes`：v2 新增。被替代的 `id` 列表，只能替代同一发送方自己的消息。
+- REPORT 的 `checkpoint`：v2 新增，布尔。为 `true` 时表示请求 Global 审核 `commit` 字段指向的版本。
+- REPORT 的 `meanwhile`：v2 新增，字符串列表，写明等待审核期间要做、且与被审内容无关的工作。
 - `probes`：列表，每项是 `{name, expected, actual, pass}`。
 - STOP 的 `acceptance`：列表，每项是 `{id: AC-<n>, evidence: [...]}`，覆盖当前 DIRECTIVE 的全部验收标准。
 
@@ -103,6 +110,9 @@ STATUS 用于心跳和状态，不进 `messages/`，不占序号，以免冲淡�
 
 - **当前 DIRECTIVE**：`version` 最大的那一条。
 - **未关闭问题**：没有被任何 DECISION 的 `answers` 引用的 QUESTION 和 OBJECTION。
+- **未解决 finding**：全部 REVIEW 的 `findings`，减去全部 REPORT 的 `resolves`（按 `<REVIEW 序号>/F-<n>` 配对，所以不同 REVIEW 的同号 finding 互不影响）。
+- **已替代**：被任何 `supersedes` 引用的 `id`。
+- **待审检查点**：带 `checkpoint: true` 的 REPORT，之后还没有任何 Global 消息在 `refs` 里引用它。
 - **可用的批准**：所有 DECISION 的 `approve_action`，减去所有 REPORT 的 `consumed_approvals`。`consumed_approvals` 登记的是**已用掉批准的那条 DECISION 的序号**，不是动作指纹——指纹只用于匹配命令，序号才唯一确定是哪一次批准。lg-action-gate 放行一次后立即在内存里扣除，并在下一条 REPORT 的 `consumed_approvals` 里登记该 DECISION 序号。
 - **动作指纹**：`<规则 id>:<命令文本 UTF-8 编码的 sha256 前 12 位十六进制>`。
 

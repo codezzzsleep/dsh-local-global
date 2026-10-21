@@ -14,6 +14,9 @@ export {
   REQUIRED_FIELDS,
   FINDING_SEVERITIES,
   REVIEW_VERDICTS,
+  COMMON_OPTIONAL_FIELDS,
+  ID_PREFIX,
+  ID_RE,
   SENDERS,
   deliveryLabel,
   isLegacySeq,
@@ -28,7 +31,7 @@ export {
 } from './types.js'
 
 export { parseFilename, parseMessage, type FilenameParts } from './parse.js'
-export { validateMessage } from './validate.js'
+export { checkIdentities, validateMessage } from './validate.js'
 export { formatMessage } from './format.js'
 export { FILENAME_RE, type FormattedMessage, type FormatInput } from './format-types.js'
 export { findSeqAnomalies, nextSeq } from './seq.js'

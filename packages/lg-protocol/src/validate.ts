@@ -2,6 +2,8 @@
  * Semantic validation of one parsed message (docs/channel-git.md §4).
  */
 import {
+  ID_PREFIX,
+  ID_RE,
   ALLOWED_SENDERS,
   MESSAGE_TYPES,
   REQUIRED_FIELDS,
@@ -60,6 +62,23 @@ export function validateMessage(message: ParsedMessage): MessageError[] {
 
   if (!(MESSAGE_TYPES as readonly string[]).includes(type)) {
     return [{ code: 'unknown-type', message: `"${type}" is not a message type; STATUS belongs to status/, not messages/` }]
+  }
+
+  // id and supersedes (SPEC "字段约定", PR-6). Format is per message; uniqueness
+  // and "only your own messages" are channel-wide and live in checkIdentities.
+  const identity = fields['id']
+  if (identity !== undefined) {
+    if (typeof identity !== 'string' || !ID_RE.test(identity)) {
+      errors.push({ code: 'bad-id', message: `"id" must look like G-0042, L-0107 or H-0003; got ${JSON.stringify(identity)}` })
+    } else if (!identity.startsWith(ID_PREFIX[sender])) {
+      errors.push({ code: 'bad-id', message: `id ${identity} does not carry the ${sender} prefix ${ID_PREFIX[sender]}` })
+    }
+  }
+  const supersedes = fields['supersedes']
+  if (supersedes !== undefined) {
+    if (!Array.isArray(supersedes) || supersedes.some((item) => typeof item !== 'string' || !ID_RE.test(item))) {
+      errors.push({ code: 'bad-supersedes', message: '"supersedes" must be a list of ids like G-0042' })
+    }
   }
 
   const allowed = ALLOWED_SENDERS[type as MessageType]
@@ -235,6 +254,52 @@ export function validateMessage(message: ParsedMessage): MessageError[] {
     }
     default:
       break
+  }
+
+  return errors
+}
+
+/**
+ * Channel-wide identity rules (SPEC "字段约定", PR-6).
+ *
+ * A per-message check cannot see these: an id has to be unique across the whole
+ * channel, and `supersedes` may only point at messages the same sender wrote.
+ * @param messages - parsed messages in ascending sequence order.
+ * @returns one entry per violation, each naming the offending sequence.
+ */
+export function checkIdentities(messages: readonly ParsedMessage[]): MessageError[] {
+  const errors: MessageError[] = []
+  const owner = new Map<string, { seq: string; sender: string }>()
+
+  for (const message of messages) {
+    const id = message.fields['id']
+    if (typeof id !== 'string') continue
+    const seen = owner.get(id)
+    if (seen !== undefined) {
+      errors.push({
+        code: 'duplicate-id',
+        message: `id ${id} appears in ${seen.seq} and ${message.seq}; ids are unique per sender and never reused`,
+      })
+    } else {
+      owner.set(id, { seq: message.seq, sender: message.sender })
+    }
+  }
+
+  for (const message of messages) {
+    const supersedes = message.fields['supersedes']
+    if (!Array.isArray(supersedes)) continue
+    for (const target of supersedes) {
+      if (typeof target !== 'string') continue
+      const seen = owner.get(target)
+      if (seen === undefined) {
+        errors.push({ code: 'unknown-supersedes', message: `${message.seq} supersedes ${target}, which no message in the channel carries` })
+      } else if (seen.sender !== message.sender) {
+        errors.push({
+          code: 'foreign-supersedes',
+          message: `${message.seq} (${message.sender}) may not supersede ${target}, which ${seen.sender} wrote in ${seen.seq}`,
+        })
+      }
+    }
   }
 
   return errors

@@ -61,20 +61,29 @@ export const REQUIRED_FIELDS: Readonly<Record<MessageType, readonly string[]>> =
 }
 
 /** Optional fields the contract names explicitly; anything else is still allowed by §3. */
+/** Every type may carry these (SPEC "消息协议": refs, id and supersedes). */
+export const COMMON_OPTIONAL_FIELDS = ['refs', 'id', 'supersedes'] as const
+
+/** `G-0042`, `L-0107`, `H-0003`: sender prefix, dash, four or more digits. */
+export const ID_RE = /^[GLH]-\d{4,}$/
+
+/** One sender's identity prefix. */
+export const ID_PREFIX: Readonly<Record<Sender, string>> = { global: 'G-', local: 'L-', human: 'H-' }
+
 export const OPTIONAL_FIELDS: Readonly<Record<MessageType, readonly string[]>> = {
-  TASK: [],
-  REPORT: ['open_questions', 'consumed_approvals', 'resolves'],
-  QUESTION: ['action'],
-  DECISION: ['approve_action'],
-  DIRECTIVE: [],
-  PATCH: [],
-  CLAIM: [],
-  OBJECTION: [],
-  CORRECTION: [],
-  REVIEW: [],
-  ISOLATION_REPORT: [],
-  STOP: [],
-  HALT: [],
+  TASK: [...COMMON_OPTIONAL_FIELDS],
+  REPORT: ['open_questions', 'consumed_approvals', 'resolves', 'checkpoint', 'meanwhile', ...COMMON_OPTIONAL_FIELDS],
+  QUESTION: ['action', ...COMMON_OPTIONAL_FIELDS],
+  DECISION: ['approve_action', ...COMMON_OPTIONAL_FIELDS],
+  DIRECTIVE: [...COMMON_OPTIONAL_FIELDS],
+  PATCH: [...COMMON_OPTIONAL_FIELDS],
+  CLAIM: [...COMMON_OPTIONAL_FIELDS],
+  OBJECTION: [...COMMON_OPTIONAL_FIELDS],
+  CORRECTION: [...COMMON_OPTIONAL_FIELDS],
+  REVIEW: [...COMMON_OPTIONAL_FIELDS],
+  ISOLATION_REPORT: [...COMMON_OPTIONAL_FIELDS],
+  STOP: [...COMMON_OPTIONAL_FIELDS],
+  HALT: [...COMMON_OPTIONAL_FIELDS],
 }
 
 /** The conclusion a REVIEW carries. */
