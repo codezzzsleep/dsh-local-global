@@ -1,5 +1,7 @@
 # 兼顾全局和局部的 Agent 框架：以 DeepSeek Harness 为例
 
+> **本文件早于 SPEC v2。** 项目规格是 [`docs/spec.md`](spec.md)；凡本文件与 `docs/spec.md` 冲突之处，一律以 `docs/spec.md` 为准。
+
 Oct 21, 2026 · @ji qi
 
 ## 概述
