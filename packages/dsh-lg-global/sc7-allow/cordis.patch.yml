@@ -1,0 +1,3 @@
+- insert:
+    - id: lg-sc7-allow
+      name: '@local-global/lg-sc7-allow'
