@@ -132,6 +132,43 @@ export function checkTools(visible: readonly string[], allowed: readonly string[
   }
 }
 
+/**
+ * Compare the channel archive with this side's saved copies (SPEC "lg-integrity"
+ * item 6, CH-12, IN-3).
+ *
+ * Read through the `lgChannel` service rather than importing the channel
+ * package, so the two bundles stay independent. When no channel is composed the
+ * check cannot run: that is reported as a warning, not a pause, because a
+ * Global profile without a channel has nothing to compare.
+ * @param ctx - plugin context.
+ * @returns one probe result.
+ */
+async function checkSentCopies(ctx: Context): Promise<ProbeResult> {
+  const channel = (ctx as unknown as { get?: (name: string) => unknown }).get?.('lgChannel') as
+    | { verifySentCopies?: () => Promise<{ filename: string; reason: string }[]> }
+    | undefined
+  if (channel?.verifySentCopies === undefined) {
+    lgState.warn('sent-copies', 'lg-channel is not composed in this profile; CH-12 comparison did not run')
+    lgState.resume('sent-copies')
+    return { name: 'sent-copies', pass: true, detail: 'not applicable: no channel composed' }
+  }
+  try {
+    const mismatches = await channel.verifySentCopies()
+    if (mismatches.length === 0) {
+      lgState.resume('sent-copies')
+      lgState.clearWarning('sent-copies')
+      return { name: 'sent-copies', pass: true, detail: 'archive matches every saved copy' }
+    }
+    return {
+      name: 'sent-copies',
+      pass: false,
+      detail: mismatches.map((entry) => `${entry.filename}: ${entry.reason}`).join('; '),
+    }
+  } catch (error) {
+    return { name: 'sent-copies', pass: false, detail: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 function profileName(ctx: Context): string | undefined {
   try {
     const service = ctx.get?.('profileContext') as { name?: string } | undefined
@@ -182,6 +219,7 @@ export function apply(ctx: Context, raw: RawIntegrityConfig): void {
     } catch (error) {
       remember({ name: 'preset-registry', pass: false, detail: error instanceof Error ? error.message : String(error) })
     }
+    remember(await checkSentCopies(ctx))
   }
 
   const checkAgent = (agent: unknown): void => {

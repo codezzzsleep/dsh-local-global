@@ -1,17 +1,12 @@
 $ node --version
 v24.22.0
-$ pnpm --version
-11.28.5
-$ dsh --version
-0.2.1-rc.2
-
 $ pnpm install
 Scope: all 4 workspace projects
 ✓ Lockfile passes supply-chain policies (verified 9h ago)
 Lockfile is up to date, resolution step is skipped
 Already up to date
 
-Done in 963ms using pnpm v11.28.5
+Done in 936ms using pnpm v11.28.5
 
 $ pnpm -r build
 Scope: 3 of 4 workspace projects
@@ -26,41 +21,35 @@ $ pnpm -r test
 Scope: 3 of 4 workspace projects
 packages/lg-protocol test$ vitest run
 packages/lg-protocol test:  RUN  v3.2.7 /var/lib/deepseek-harness/GlobalAndLocalAgent/dsh-local-global/packages/lg-protocol
-packages/lg-protocol test:  ✓ test/format.test.ts (6 tests) 18ms
-packages/lg-protocol test:  ✓ test/fold.test.ts (11 tests) 23ms
-packages/lg-protocol test:  ✓ test/validate.test.ts (31 tests) 66ms
+packages/lg-protocol test:  ✓ test/format.test.ts (6 tests) 20ms
+packages/lg-protocol test:  ✓ test/fold.test.ts (11 tests) 28ms
+packages/lg-protocol test:  ✓ test/validate.test.ts (31 tests) 58ms
 packages/lg-protocol test:  ✓ test/parse.test.ts (6 tests) 17ms
 packages/lg-protocol test:  ✓ test/seq.test.ts (7 tests) 5ms
 packages/lg-protocol test:  Test Files  5 passed (5)
 packages/lg-protocol test:       Tests  61 passed (61)
-packages/lg-protocol test:    Start at  11:25:29
-packages/lg-protocol test:    Duration  636ms (transform 168ms, setup 0ms, collect 540ms, tests 129ms, environment 1ms, prepare 328ms)
+packages/lg-protocol test:    Start at  11:42:19
+packages/lg-protocol test:    Duration  650ms (transform 168ms, setup 0ms, collect 516ms, tests 127ms, environment 1ms, prepare 330ms)
 packages/lg-protocol test: Done
 packages/dsh-lg-common test$ vitest run
 packages/dsh-lg-global test$ vitest run
 packages/dsh-lg-global test:  RUN  v3.2.7 /var/lib/deepseek-harness/GlobalAndLocalAgent/dsh-local-global/packages/dsh-lg-global
 packages/dsh-lg-common test:  RUN  v3.2.7 /var/lib/deepseek-harness/GlobalAndLocalAgent/dsh-local-global/packages/dsh-lg-common
-packages/dsh-lg-global test:  ✓ test/scope.test.ts (26 tests) 16ms
-packages/dsh-lg-global test:  ✓ test/repo.test.ts (11 tests) 630ms
-packages/dsh-lg-global test:    ✓ probePushDenied > reports denied or inconclusive against an anonymous https remote, never writable  577ms
+packages/dsh-lg-global test:  ✓ test/scope.test.ts (26 tests) 21ms
+packages/dsh-lg-common test:  ✓ test/git-channel.test.ts (5 tests) 572ms
+packages/dsh-lg-common test:  ✓ test/channel-runtime.test.ts (9 tests) 999ms
+packages/dsh-lg-common test:  Test Files  2 passed (2)
+packages/dsh-lg-common test:       Tests  14 passed (14)
+packages/dsh-lg-common test:    Start at  11:42:20
+packages/dsh-lg-common test:    Duration  1.52s (transform 197ms, setup 0ms, collect 394ms, tests 1.57s, environment 0ms, prepare 177ms)
+packages/dsh-lg-common test: Done
+packages/dsh-lg-global test:  ✓ test/repo.test.ts (11 tests) 60117ms
+packages/dsh-lg-global test:    ✓ probePushDenied > reports denied or inconclusive against an anonymous https remote, never writable  60054ms
 packages/dsh-lg-global test:  Test Files  2 passed (2)
 packages/dsh-lg-global test:       Tests  37 passed (37)
-packages/dsh-lg-global test:    Start at  11:25:30
-packages/dsh-lg-global test:    Duration  1.06s (transform 182ms, setup 0ms, collect 278ms, tests 646ms, environment 0ms, prepare 153ms)
-packages/dsh-lg-common test:  ✓ test/git-channel.test.ts (5 tests) 572ms
+packages/dsh-lg-global test:    Start at  11:42:20
+packages/dsh-lg-global test:    Duration  60.59s (transform 176ms, setup 0ms, collect 285ms, tests 60.14s, environment 0ms, prepare 159ms)
 packages/dsh-lg-global test: Done
-packages/dsh-lg-common test:  ✓ test/channel-runtime.test.ts (6 tests) 701ms
-packages/dsh-lg-common test:  Test Files  2 passed (2)
-packages/dsh-lg-common test:       Tests  11 passed (11)
-packages/dsh-lg-common test:    Start at  11:25:30
-packages/dsh-lg-common test:    Duration  1.26s (transform 194ms, setup 0ms, collect 424ms, tests 1.27s, environment 0ms, prepare 201ms)
-packages/dsh-lg-common test: Done
-
-## 结果（QA-1）
-
-- `pnpm install`：无 `ERR_*`、无 `WARN`（全文 `grep -cE "WARN|ERR_"` = 0）。
-- `pnpm -r build`：两个包各一次 `tsc`，无错误。
-- `pnpm -r test`：**109 个用例全部通过**（lg-protocol 61、dsh-lg-global 37、dsh-lg-common 11）。
 
 本轮新增的 lg-global 用例（P2）：
 
@@ -75,3 +64,15 @@ packages/dsh-lg-common test: Done
 | `probePushDenied` › reports denied or inconclusive against an anonymous https remote, never writable | RP-6 |
 | `recordProbeOutcome` › pauses on writable / passes on denied / warns but does not pause on inconclusive | RP-6 规则、AC-2 |
 | `recordProbeOutcome` › clears a stale warning when a later run is denied | RP-6 |
+
+## P3 之后（CH-12 / IN-3）
+
+`pnpm -r test`：**112 个用例全部通过**（lg-protocol 61、dsh-lg-common 14、dsh-lg-global 37）。
+
+新增的 dsh-lg-common 用例：
+
+| 用例 | 对应需求 |
+|---|---|
+| sent copies › saves a byte-exact copy of every message this side writes | CH-12 |
+| sent copies › reports a mismatch when the archived message is tampered with | CH-12、IN-3 |
+| sent copies › reports nothing for a message this side never wrote | CH-12 对照 |

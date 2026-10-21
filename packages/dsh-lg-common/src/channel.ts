@@ -5,6 +5,7 @@
  * the bound session, and append messages as one commit each.
  */
 import { randomUUID } from 'node:crypto'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -56,21 +57,93 @@ export interface PostResult {
   readonly commit: string
 }
 
+/** One byte-level difference between the archive and this side's saved copy. */
+export interface SentCopyMismatch {
+  readonly filename: string
+  readonly reason: string
+}
+
 /** Live channel shared by `lg-channel` and `lg-commands` in one process. */
 export class ChannelRuntime {
   readonly ctx: Context
   readonly config: ChannelConfig
   readonly repo: ChannelRepo
   private readonly store: StateStore
+  /** Copies of every message this side wrote, keyed by its file name (CH-12). */
+  private readonly sentDir: string
   private state: PersistedState
   private polling = false
+  private reportedMismatch = new Set<string>()
 
   constructor(ctx: Context, config: ChannelConfig) {
     this.ctx = ctx
     this.config = config
     this.repo = new ChannelRepo(config.cloneDir, config.repo, config.branch)
     this.store = new StateStore(join(config.stateDir, `${config.slug}.json`))
+    this.sentDir = join(config.stateDir, 'sent')
     this.state = initialState(config.repo, config.role)
+  }
+
+  /**
+   * Save the exact bytes of a message this side just wrote (CH-12).
+   * @param filename - the archived file name, also used as the copy's key.
+   * @param text - the complete message text, byte for byte.
+   */
+  async saveSentCopy(filename: string, text: string): Promise<void> {
+    await mkdir(this.sentDir, { recursive: true })
+    await writeFile(join(this.sentDir, filename), text, 'utf8')
+  }
+
+  /** Read back a saved copy; `undefined` when this side never wrote that file. */
+  async sentCopyOf(filename: string): Promise<string | undefined> {
+    try {
+      return await readFile(join(this.sentDir, filename), 'utf8')
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Compare every archived message this side sent against its saved copy.
+   *
+   * A copy that exists and differs is a mismatch — that is the tamper case
+   * the SPEC's IN-3 pauses on. An own message with no copy at all (written
+   * before this side started keeping copies) is reported separately by
+   * {@link uncopiedOwnMessages} so it cannot mask a tamper.
+   * @returns one entry per differing or missing copy.
+   */
+  async verifySentCopies(): Promise<SentCopyMismatch[]> {
+    const out: SentCopyMismatch[] = []
+    for (const filename of await this.repo.listMessages()) {
+      const text = await this.repo.readFile(`messages/${filename}`)
+      if (text === undefined) continue
+      const parsed = parseMessage(filename, text)
+      if (!parsed.ok) continue
+      if (parsed.message.sender !== this.config.role) continue
+      const copy = await this.sentCopyOf(filename)
+      if (copy === undefined) continue
+      if (copy !== text) {
+        out.push({
+          filename,
+          reason: `archived bytes differ from the saved copy (copy ${String(Buffer.byteLength(copy, 'utf8'))}B, archive ${String(Buffer.byteLength(text, 'utf8'))}B)`,
+        })
+      }
+    }
+    return out
+  }
+
+  /** Own messages the archive holds but this side has no copy of. */
+  async uncopiedOwnMessages(): Promise<string[]> {
+    const out: string[] = []
+    for (const filename of await this.repo.listMessages()) {
+      const text = await this.repo.readFile(`messages/${filename}`)
+      if (text === undefined) continue
+      const parsed = parseMessage(filename, text)
+      if (!parsed.ok) continue
+      if (parsed.message.sender !== this.config.role) continue
+      if ((await this.sentCopyOf(filename)) === undefined) out.push(filename)
+    }
+    return out
   }
 
   /** Prepare the mirror and load persisted state. */
@@ -141,6 +214,7 @@ export class ChannelRuntime {
     this.polling = true
     try {
       await this.repo.fetch()
+      await this.reportSentCopyMismatches()
       for (const filename of await this.repo.listMessages()) {
         const seq = filename.slice(0, 4)
         if (!/^\d{4}$/.test(seq) || seq <= this.state.cursor) continue
@@ -151,6 +225,36 @@ export class ChannelRuntime {
       }
     } finally {
       this.polling = false
+    }
+  }
+
+  /**
+   * Post one ISOLATION_REPORT per newly seen lost-integrity finding (CH-12).
+   *
+   * Runs after the fetch so it sees the archive as it stands; each file is
+   * reported at most once per process, so a tampered message does not spam.
+   */
+  private async reportSentCopyMismatches(): Promise<void> {
+    const mismatches = await this.verifySentCopies()
+    const fresh = mismatches.filter((entry) => !this.reportedMismatch.has(entry.filename))
+    if (fresh.length === 0) return
+    for (const entry of fresh) this.reportedMismatch.add(entry.filename)
+    try {
+      await this.post({
+        type: 'ISOLATION_REPORT',
+        fields: {
+          probes: fresh.map((entry) => ({
+            name: `sent-copy:${entry.filename}`,
+            expected: 'archive equals the saved copy',
+            actual: entry.reason,
+            pass: false,
+          })),
+        },
+        body: `本侧自己发出的消息在频道存档里与发件副本不一致（CH-12）。\n\n${fresh.map((e) => `- messages/${e.filename}: ${e.reason}`).join('\n')}`,
+      })
+    } catch {
+      // Reporting must never take the poll loop down; the mismatch stays visible
+      // through lg_integrity_check (IN-3).
     }
   }
 
@@ -239,10 +343,12 @@ export class ChannelRuntime {
     if (input.refs !== undefined && fields['refs'] === undefined) fields['refs'] = [...input.refs]
     const body = input.body ?? ''
     this.probe(sender, input.type, fields, body)
-    return await this.repo.append((seq) => {
+    const result = await this.repo.append((seq) => {
       const rendered = formatMessage({ seq, sender, type: input.type, fields, body })
       return { sender, type: input.type, filename: rendered.filename, text: rendered.text }
     })
+    await this.saveSentCopy(result.filename, await this.renderedAgain(sender, input.type, fields, body, result.seq))
+    return result
   }
 
   /**
@@ -270,12 +376,25 @@ export class ChannelRuntime {
     // relayed before this side knows how to validate it).
     const parsed = parseMessage(`9999-${sender}-${type}.md`, text)
     if (!parsed.ok) throw new ChannelError('invalid-message', parsed.errors.map((error) => error.message).join('; '), parsed.errors)
-    return await this.repo.append((seq) => ({
+    const result = await this.repo.append((seq) => ({
       sender,
       type,
       filename: `${seq}-${sender}-${type}.md`,
       text,
     }))
+    await this.saveSentCopy(result.filename, text)
+    return result
+  }
+
+  /** Re-render a posted message so the saved copy holds the archived bytes. */
+  private async renderedAgain(
+    sender: Sender,
+    type: MessageType,
+    fields: Readonly<Record<string, unknown>>,
+    body: string,
+    seq: string,
+  ): Promise<string> {
+    return formatMessage({ seq, sender, type, fields, body }).text
   }
 
   /** Every parsed message, ascending. */
@@ -452,6 +571,9 @@ export function apply(ctx: Context, raw: RawChannelConfig): void {
   } as ToolDefinition)
 
   ctx.effect(() => {
+    // Expose the runtime so lg-integrity (a different bundle) can run the
+    // CH-12 byte comparison without importing this package.
+    const release = (ctx as unknown as { provide?: (name: string, value: unknown) => () => void }).provide?.('lgChannel', runtime)
     let timer: ReturnType<typeof setInterval> | undefined
     let disposed = false
     void (async () => {
@@ -472,6 +594,7 @@ export function apply(ctx: Context, raw: RawChannelConfig): void {
     return () => {
       disposed = true
       if (timer !== undefined) clearInterval(timer)
+      release?.()
       if (active === runtime) active = undefined
     }
   })

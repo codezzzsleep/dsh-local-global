@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -112,5 +112,54 @@ describe('bind', () => {
     // The later message arrived while bound, so a rebind must not skip it.
     await channel.bind('session-2')
     expect(channel.cursor).toBe('0001')
+  })
+})
+
+describe('sent copies (CH-12 / IN-3)', () => {
+  it('saves a byte-exact copy of every message this side writes', async () => {
+    const channel = await runtime()
+    const posted = await channel.post({ type: 'CLAIM', fields: { scope: ['x'], implementer: 'local' } })
+    const archived = await channel.repo.readFile(`messages/${posted.filename}`)
+    const copy = await channel.sentCopyOf(posted.filename)
+    expect(copy).toBe(archived)
+    expect(await channel.verifySentCopies()).toEqual([])
+  })
+
+  it('reports a mismatch when the archived message is tampered with', async () => {
+    const channel = await runtime()
+    const posted = await channel.post({ type: 'CLAIM', fields: { scope: ['x'], implementer: 'local' } })
+
+    // Rewrite the archived file in a fresh clone and push it: this is the
+    // tamper IN-3 must catch.
+    const work = join(workspace, 'tamper')
+    await runGit(['clone', '-q', remote, work])
+    await runGit(['config', 'user.name', 'tamper'], { cwd: work })
+    await runGit(['config', 'user.email', 'tamper@invalid'], { cwd: work })
+    await appendFile(join(work, 'messages', posted.filename), '\n本行是篡改\n')
+    await runGit(['add', '-A'], { cwd: work })
+    await runGit(['commit', '-q', '-m', 'tamper'], { cwd: work })
+    await runGit(['push', '-q', 'origin', 'HEAD:main'], { cwd: work })
+
+    await channel.repo.fetch()
+    const mismatches = await channel.verifySentCopies()
+    expect(mismatches.map((entry) => entry.filename)).toEqual([posted.filename])
+    expect(mismatches[0]?.reason).toContain('differ')
+  })
+
+  it('reports nothing for a message this side never wrote', async () => {
+    const channel = await runtime()
+    const work = join(workspace, 'other')
+    await runGit(['clone', '-q', remote, work])
+    await runGit(['config', 'user.name', 'other'], { cwd: work })
+    await runGit(['config', 'user.email', 'other@invalid'], { cwd: work })
+    await mkdir(join(work, 'messages'), { recursive: true })
+    await writeFile(join(work, 'messages', '0001-global-CLAIM.md'), "[LG CLAIM from global]\nscope: ['y']\nimplementer: global\n---\n")
+    await runGit(['add', '-A'], { cwd: work })
+    await runGit(['commit', '-q', '-m', 'msg 0001 global CLAIM'], { cwd: work })
+    await runGit(['push', '-q', 'origin', 'HEAD:main'], { cwd: work })
+
+    await channel.repo.fetch()
+    expect(await channel.verifySentCopies()).toEqual([])
+    expect(await channel.uncopiedOwnMessages()).toEqual([])
   })
 })
