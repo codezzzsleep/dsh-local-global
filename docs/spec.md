@@ -637,65 +637,79 @@ dsh 的模式选择器里新增“共察模式”（英文 Co-Observer，preset 
 
 ## 本项目的协作方式
 
-本项目的两个模型通过 Human 部署的 webchat 自动通信，不再由 Human 转贴。Global 用 lgchat.py 在 webchat 里收发；Local 不直接碰 webchat，仍然只用频道仓库。两边之间由桥接程序 lgbridge.py 自动同步，GitHub 上的频道仓库始终是正式存档。
+Global 和 Local 都通过 lgchat 客户端，在同一个聊天服务上对话，不再由 Human 转贴。聊天服务是一项抽象的通用能力：部署在哪里都行，只要提供下面的接口。Human 给双方各发一个地址、一个 token 和 lgchat.py 即可。
 
-**组件与地址**
+**聊天服务的接口**
 
-| 组件 | 谁用 | 作用 |
-| --- | --- | --- |
-| webchat.py | Human 部署在自己的服务器上，公网可访问 | 消息中转；ai1 的 token 给 Global，ai2 的 token 给桥，viewer 的 token 给 Human 旁观 |
-| lgchat.py | Global | 发消息（send）、等待唤醒（wait）、翻看历史（read）；自动保存游标和发出副本 |
-| lgbridge.py | Human 在 Local 的机器上常驻运行 | 把 Global 的消息原样存进频道仓库；把频道仓库里 Local 和 Human 的新消息转发到 webchat |
-| 频道仓库 | 三方 | `https://github.com/codezzzsleep/local-global-channel`，公开，正式存档 |
-| 插件仓库 | 三方 | `https://github.com/codezzzsleep/dsh-local-global`，公开，MIT，默认分支 main |
+所有请求带 `Authorization: Bearer <token>`，发送者由 token 决定。
 
-Global 的运行环境必须能执行命令，并能访问 webchat 和 GitHub。
+| 接口 | 作用 |
+| --- | --- |
+| `GET /api/me` | 返回当前 token 的角色 |
+| `POST /api/messages`，请求体 {text, client\_id} | 存一条消息；同一角色的同一个 client\_id 只存一次 |
+| `GET /api/messages?after=N&wait=S&limit=L` | 返回编号 N 之后的消息；没有新消息时最多等 S 秒 |
 
-**部署要求（Human 负责）**
+服务只追加，不提供修改和删除，每条消息带服务器时间。Human 的 webchat.py 满足这些接口：角色 ai1 是 Global，ai2 是 Local，viewer 供 Human 旁观。
 
-- webchat 应当通过 https 访问，例如在前面放一个自动签发证书的反向代理，代理保留原始 Host 头。明文 http 会让 token 在公网上暴露。
-- webchat 不与 Local 在同一个系统用户下运行，Local 的工具不得能读写它的数据目录。
-- 桥用一份专门的频道仓库克隆，不与 Local 的 lg-channel 共用。
-- token 只交给对应的一方，不得写进频道、仓库、证据或 webchat 消息。
+**lgchat 客户端**
+
+双方用同一个 lgchat.py，配置三个环境变量：LGCHAT\_URL、LGCHAT\_TOKEN\_FILE、LGCHAT\_STATE\_DIR。
+
+| 命令 | 作用 |
+| --- | --- |
+| `lgchat.py me` | 显示 token 的角色 |
+| `lgchat.py send <文件>` | 发一条频道消息。先检查首行的发送者与 token 一致、字段区有 id、长度不超限；用 id 作 client\_id，并保留发出副本 |
+| `lgchat.py wait` | 一直等到有需要本方处理的消息才返回，并列出期间的其他消息；退出码 2 表示超时，再运行一次 |
+| `lgchat.py read --after <编号>` | 翻看历史，不移动游标 |
+| `lgchat.py export --channel-dir <目录>` | 只有 Local 可用：把聊天服务里的频道消息补进频道仓库并推送 |
+
+什么算“需要本方处理”：Global 只在带 checkpoint 的 REPORT、阻塞的 QUESTION、OBJECTION、TASK、HALT 到来时返回；Local 在 Global 或 Human 的任何消息到来时返回。游标自动保存，中断后从游标继续。
 
 **消息格式**
 
-- webchat 里每条消息的正文就是一条完整的频道消息：首行 `[LG <类型> from <发送者>]`、YAML 字段区、`---`、正文，规则见“消息协议”。一条 webchat 消息只放一条频道消息。
-- 每条消息带 id：Global 从 G-0001、Local 从 L-0001 起递增。lgchat.py 把 id 用作 client\_id，重发不会产生重复消息。
-- Global 的单条消息不超过 16000 个字符，更长的内容放进插件仓库。Local 的消息超过这个长度时，桥只转发首行和字段区，正文指向频道仓库里的原文。
+- 聊天服务里每条消息的正文就是一条完整的频道消息：首行 `[LG <类型> from <发送者>]`、YAML 字段区、`---`、正文，规则见“消息协议”。一条只放一条频道消息。
+- 每条消息带 id：Global 从 G-0001、Local 从 L-0001 起递增。
+- 单条不超过 16000 个字符，更长的内容放进插件仓库，消息里写路径和 commit。
 
 **一轮是怎么转起来的**
 
-1. Local 到达检查点，用 lg\_post 把带 checkpoint 的 REPORT 写进频道仓库。桥自动把它转发到 webchat。
-2. Global 平时停在 `lgchat.py wait` 上。它只在唤醒类消息到来时返回：带 checkpoint 的 REPORT、阻塞的 QUESTION、OBJECTION、TASK、HALT，并把期间的其他消息一并列出。超时（退出码 2）就再运行一次。
-3. Global 按检查点的 commit 阅读插件仓库的代码和证据原件，把本轮消息写成文件，用 `lgchat.py send` 发出，优先合成一条。
-4. 桥把 Global 的消息原样存进频道仓库，Local 的 lg-channel 照常投递给绑定的会话。这些消息已经存过档，Local 不再用 lg\_record\_relayed 存一次。
-5. Global 下一轮开始时，把 lgchat-state/sent/ 里的发出副本与频道仓库里的存档逐字节核对；不一致或缺失就告诉 Human。
+1. Local 到达检查点，用 `lgchat.py send` 发带 checkpoint 的 REPORT，然后用 `lgchat.py export` 存档，再回到 `lgchat.py wait`。
+2. Global 平时停在 `lgchat.py wait`，收到检查点后返回。
+3. Global 按检查点的 commit 阅读插件仓库的代码和证据原件，把本轮消息写成文件，用 `lgchat.py send` 发出，优先合成一条，然后回到 wait。
+4. Local 的 wait 返回，它按 Global 的消息继续工作，直到下一个检查点。
+
+**存档**
+
+- Local 是唯一能写仓库的一方，所以由 Local 存档。每次发出带 checkpoint 的 REPORT 之后，以及最终验收之前，Local 都运行 `lgchat.py export`。
+- export 把聊天服务里的全部频道消息按“消息协议”的文件格式补进频道仓库 codezzzsleep/local-global-channel，一条一个提交，逐字节相同的已有消息会跳过。
+- 最终验收以频道仓库里的记录为准。
+- Local 的日常 profile 不再用 lg-channel 接收本项目的消息，以免同一条消息从两条路进来。lg-channel 本身仍是开发对象。
 
 **Global 必须做到**
 
-- 每条消息带 id，用 lgchat.py 发送。
+- 所有消息都用 `lgchat.py send` 发出并带 id；空闲时停在 `lgchat.py wait`。
 - 发出即为最终版，不撤回、不作废；要改就发 CORRECTION，或发带 supersedes 的新消息。
 - 发出前对照“消息协议”自查格式：首行、YAML、必填字段、AC 与 F 的编号格式。
 - REVIEW 的 finding 和 DIRECTIVE 的验收标准都引用本规格的需求编号。
 - 定方向、定约束、定验收，不替 Local 写实现；但涉及集成的名字和格式必须写准。
 - 不只信 REPORT：结论必须来自仓库里的代码和证据原件，每轮至少打开一份原始证据。
-- 只在唤醒类消息到来时开始一轮，不逐条回应进度消息。
+- 只在 wait 返回时开始一轮，不逐条回应进度消息。
 
 **Local 必须做到**（写进插件仓库的 AGENTS.md）
 
-- 完成 DIRECTIVE 的一项 P 时发带 checkpoint 的 REPORT；之后只做 meanwhile 里声明过的、与被审内容无关的工作，没有声明就等待。
+- 所有消息都用 `lgchat.py send` 发出并带 id；空闲或等待审核时停在 `lgchat.py wait`。
+- 完成 DIRECTIVE 的一项 P 时发带 checkpoint 的 REPORT，紧接着运行 export；之后只做 meanwhile 里声明过的、与被审内容无关的工作，没有声明就等待。
 - 需要 Global 决定时发 QUESTION，写明默认动作，继续做不受阻的部分；不同意时发 OBJECTION 并附证据。
 - 连续工作 30 分钟没发过消息时，发一条进度 REPORT；停下之前，有未报告的提交就先发 REPORT。
-- 频道投递来的 Global 消息已由桥存档，不再存一次；只有 Human 粘贴进会话的消息才用 lg\_record\_relayed。
 - 不改写频道仓库，不 force push；提交只用本机 git 身份，不加其他作者或尾注。
 - commit 字段用 `git rev-parse HEAD` 取，不手工补全。
-- 频道和证据里不出现访问 token、密钥和公网部署地址。
+- 消息、仓库和证据里不出现访问 token、密钥和公网部署地址。
 
-**Human 的位置**
+**部署要求与 Human 的位置**
 
-- 运行 webchat 和桥，用 viewer token 旁观。
-- webchat 应当增加一个 human 写入角色。在增加之前，Human 在 Local 的界面执行 /lg-halt，HALT 会写进频道仓库并由桥转给 Global；紧急时直接停掉两个模型的进程。
+- 聊天服务应当通过 https 访问，否则 token 在公网上是明文。
+- Local 不得能直接读写聊天服务的数据；token 只交给对应的一方。
+- Human 用 viewer token 旁观。聊天服务应当提供 human 角色，让 Human 用 lgchat 以 human 身份发 TASK 和 HALT；当前的 webchat.py 还没有，在加上之前，Human 要喊停就直接停掉模型。
 - 部署与权限只由 Human 决定。C 类动作由 Global 用 DECISION 批准；npm 发布另外还需要 Human 同意。
 
 ## 当前状态与交接
@@ -753,7 +767,7 @@ Global 的运行环境必须能执行命令，并能访问 webchat 和 GitHub。
 | 新模式的名字 | 共察模式（Co-Observer），preset id 为 lg-local |
 | 检查点之后 Local 做什么 | 只做 meanwhile 里声明过的、与被审内容无关的工作；没有声明就等待 |
 | 检查点的粒度 | DIRECTIVE 的每一项 P、阻塞的 QUESTION、里程碑完成 |
-| 形态 A 下 Global 怎么写频道 | 首选只能写频道仓库的凭据；没有就走中转。本项目用 webchat 传递，由桥接程序自动存档到频道仓库 |
+| 形态 A 下 Global 怎么写频道 | 首选只能写频道仓库的凭据；没有就走中转。本项目用聊天服务通信，双方都用 lgchat，由 Local 用 lgchat export 存档到频道仓库 |
 | 仓库沙箱跑在哪里 | 自己的 profile（lg-reposandbox 前缀）和独立 DSH\_HOME |
 | push 探针查不出结果时 | 只警告不暂停；验收必须在本机实测得到 denied |
 | 一个 Global 对多个 Local | v0.1 不做 |
