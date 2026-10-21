@@ -98,7 +98,7 @@ export class ChannelRuntime {
     this.ctx = ctx
     this.config = config
     this.repo = new ChannelRepo(config.cloneDir, config.repo, config.branch)
-    this.store = new StateStore(join(config.stateDir, `${config.slug}.json`))
+    this.store = new StateStore(join(config.stateDir, `${config.slug}.json`), config.legacyStateFile)
     this.sentDir = join(config.stateDir, 'sent')
     this.state = initialState(config.repo, config.role)
   }
@@ -167,6 +167,9 @@ export class ChannelRuntime {
 
   /** Prepare the mirror and load persisted state. */
   async start(): Promise<void> {
+    if (await this.store.migrate()) {
+      this.ctx.logger?.('lg-channel')?.info?.(`lg-channel: adopted the pre-SPEC state file at ${String(this.config.legacyStateFile)}`)
+    }
     this.state = await this.store.load(this.config.repo, this.config.role)
     await this.repo.ensure()
   }

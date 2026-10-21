@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -227,5 +228,39 @@ describe('EV-4: a REPORT citing stale evidence is refused', () => {
     // No service at all: the archive path is unchanged.
     const plain = await runtime()
     await expect(plain.post(report(['evidence/M3/ev-real/manifest.json']))).resolves.toBeTruthy()
+  })
+})
+
+describe('AC-6: the stateDir default moved, and a bound session keeps its cursor', () => {
+  it('defaults to $DSH_HOME/lg/state/<slug> and carries the legacy path', () => {
+    const config = resolveChannelConfig({ repo: 'https://example.invalid/x.git', role: 'local' }, '/srv/home')
+    expect(config.stateDir.startsWith('/srv/home/lg/state/')).toBe(true)
+    expect(config.legacyStateFile).toBe(`/srv/home/lg/${config.slug}.json`)
+  })
+
+  it('adopts the pre-SPEC file once, then leaves it alone', async () => {
+    const { StateStore } = await import('../src/state.js')
+    const home = await mkdtemp(join(tmpdir(), 'lg-migrate-'))
+    const legacy = join(home, 'lg', 'slug.json')
+    const current = join(home, 'lg', 'state', 'slug.json')
+    await mkdir(join(home, 'lg'), { recursive: true })
+    await writeFile(legacy, JSON.stringify({ repo: 'r', role: 'local', cursor: '0042', boundSessionId: 'session-x', deliveredIds: ['L-0001'], halted: false, updatedAt: 'x' }))
+
+    const store = new StateStore(current, legacy)
+    expect(await store.migrate()).toBe(true)
+    const loaded = await store.load('r', 'local')
+    expect(loaded.cursor).toBe('0042')
+    expect(loaded.boundSessionId).toBe('session-x')
+    expect(loaded.deliveredIds).toEqual(['L-0001'])
+    // Idempotent, and the old file is still there for a rollback.
+    expect(await store.migrate()).toBe(false)
+    expect(existsSync(legacy)).toBe(true)
+  })
+
+  it('does nothing without a legacy path or without a legacy file', async () => {
+    const { StateStore } = await import('../src/state.js')
+    const home = await mkdtemp(join(tmpdir(), 'lg-migrate2-'))
+    expect(await new StateStore(join(home, 'state', 's.json')).migrate()).toBe(false)
+    expect(await new StateStore(join(home, 'state', 's.json'), join(home, 'nope.json')).migrate()).toBe(false)
   })
 })

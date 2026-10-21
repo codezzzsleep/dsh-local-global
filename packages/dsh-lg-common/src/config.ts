@@ -25,6 +25,8 @@ export interface ChannelConfig {
   readonly stateDir: string
   /** Stable short name derived from the repo URL. */
   readonly slug: string
+  /** Where this side's state lived before the SPEC-aligned default; adopted on start. */
+  readonly legacyStateFile?: string
 }
 
 /** Raw plugin config as it appears in `cordis.patch.yml`. */
@@ -64,7 +66,13 @@ function asBoolean(value: unknown, fallback: boolean, field: string): boolean {
  * @returns the resolved configuration.
  * @throws TypeError when a required field is missing or a value is out of range.
  */
-export function resolveChannelConfig(raw: RawChannelConfig): ChannelConfig {
+/**
+ * Resolve and validate the channel config.
+ * @param raw - profile-supplied config.
+ * @param home - DSH_HOME to resolve defaults against; tests pass one explicitly.
+ * @returns the effective config.
+ */
+export function resolveChannelConfig(raw: RawChannelConfig, home: string = dshHome()): ChannelConfig {
   if (typeof raw.repo !== 'string' || raw.repo.trim().length === 0) {
     throw new TypeError('lg-channel: "repo" is required (git URL of the channel repository)')
   }
@@ -78,9 +86,21 @@ export function resolveChannelConfig(raw: RawChannelConfig): ChannelConfig {
     throw new TypeError('lg-channel: "pollSeconds" must be a positive number')
   }
   const relay = asBoolean(raw.relay, false, 'relay')
-  const home = dshHome()
   const slug = repoSlug(repo)
-  const stateDir = raw.stateDir === undefined ? join(home, 'lg') : String(raw.stateDir)
+  // SPEC's config table: `$DSH_HOME/lg/state/<仓库标识>`. It used to be just
+  // `$DSH_HOME/lg`, which is where a bound session's cursor still lives; the
+  // legacy path travels with the config so a start can adopt it (see StateStore).
+  const stateDir = raw.stateDir === undefined ? join(home, 'lg', 'state', slug) : String(raw.stateDir)
   const cloneDir = raw.cloneDir === undefined ? join(home, 'lg', `${slug}.git`) : String(raw.cloneDir)
-  return { repo, branch, role: raw.role, pollSeconds, relay, cloneDir, stateDir, slug }
+  return {
+    repo,
+    branch,
+    role: raw.role,
+    pollSeconds,
+    relay,
+    cloneDir,
+    stateDir,
+    slug,
+    ...(raw.stateDir === undefined ? { legacyStateFile: join(home, 'lg', `${slug}.json`) } : {}),
+  }
 }

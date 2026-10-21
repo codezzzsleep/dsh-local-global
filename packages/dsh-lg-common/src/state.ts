@@ -31,9 +31,44 @@ export function initialState(repo: string, role: Role): PersistedState {
 /** Atomic JSON state file. */
 export class StateStore {
   private readonly file: string
+  private readonly legacyFile: string | undefined
 
-  constructor(file: string) {
+  constructor(file: string, legacyFile?: string) {
     this.file = file
+    this.legacyFile = legacyFile
+  }
+
+  /**
+   * Adopt the pre-SPEC state file once, so a bound session keeps its cursor.
+   *
+   * The default `stateDir` moved from `$DSH_HOME/lg` to
+   * `$DSH_HOME/lg/state/<仓库标识>`; without this a running deployment would
+   * silently start from a fresh cursor — and CH-2 would then skip every message
+   * the session had not yet seen. The old file is copied, never moved or
+   * deleted, so a rollback still finds it.
+   * @returns true when a legacy file was adopted.
+   */
+  async migrate(): Promise<boolean> {
+    if (this.legacyFile === undefined) return false
+    if (await this.exists(this.file)) return false
+    try {
+      const raw = await readFile(this.legacyFile, 'utf8')
+      await mkdir(dirname(this.file), { recursive: true })
+      await writeFile(this.file, raw, 'utf8')
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /** Whether a path exists. */
+  private async exists(path: string): Promise<boolean> {
+    try {
+      await readFile(path, 'utf8')
+      return true
+    } catch {
+      return false
+    }
   }
 
   /**
