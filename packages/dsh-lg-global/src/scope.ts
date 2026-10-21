@@ -22,6 +22,13 @@ import { lgState } from './state.js'
 /** Tools that read or write through a path argument. */
 export const PATH_TOOLS = ['read', 'read_image', 'write', 'edit', 'glob', 'grep', 'working_directory'] as const
 
+/**
+ * Project tools that write a file and therefore get the same path rule as the
+ * filesystem tools, keyed by their own argument name. Without this the CH-12
+ * evidence export could write outside the workspace.
+ */
+export const TOOL_PATH_ARGUMENTS: Readonly<Record<string, string>> = { lg_evidence_session: 'out' }
+
 /** Tools whose missing path means "the session working directory". */
 export const CWD_DEFAULT_TOOLS = ['glob', 'grep'] as const
 
@@ -284,6 +291,12 @@ export function apply(ctx: Context, raw: RawScopeConfig): void {
       return verdict.allow ? undefined : (verdict.reason ?? 'lg-scope: web_fetch denied')
     }
 
+    const projectArg = TOOL_PATH_ARGUMENTS[toolName]
+    if (projectArg !== undefined) {
+      const raw = (exec.arguments as Record<string, unknown> | undefined)?.[projectArg]
+      if (typeof raw !== 'string') return `lg-scope: ${toolName} without a ${projectArg}`
+      return checkPath({ ...config, writeRoots: config.writeRoots }, toolName, raw, sessionCwd(exec.agent))
+    }
     if (!(PATH_TOOLS as readonly string[]).includes(toolName)) return undefined
     const target = pathArgument(exec.arguments)
     if (target === undefined && !(CWD_DEFAULT_TOOLS as readonly string[]).includes(toolName)) return undefined

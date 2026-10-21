@@ -80,8 +80,14 @@ export class GuardState {
 
   /** Human-readable denial reason. */
   denial(): string {
-    const first = this.first
-    return first === undefined ? 'lg-global paused' : `lg-global paused: ${first.code} — ${first.detail}`
+    // Name the rule that actually failed, not the boot-time `not-verified`
+    // placeholder: QA-3 wants the target rule's own error text, and during a
+    // failed startup both reasons are present.
+    let reason = this.first
+    for (const entry of this.reasons) {
+      if (entry.code !== 'not-verified') reason = entry
+    }
+    return reason === undefined ? 'lg-global paused' : `lg-global paused: ${reason.code} — ${reason.detail}`
   }
 }
 

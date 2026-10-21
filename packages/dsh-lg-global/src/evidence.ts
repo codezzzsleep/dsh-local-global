@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve as resolvePath } from 'node:path'
+import { isInside, sessionCwd } from './scope.js'
 import { zstdDecompressSync } from 'node:zlib'
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -131,7 +132,15 @@ export function apply(ctx: Context): void {
       const artifact = await readSessionArtifact(sessionsRoot(), id)
       if (typeof artifact === 'string') throw new Error(artifact)
 
-      const file = isAbsolute(input.out) ? input.out : resolvePath(process.cwd(), input.out)
+      // A relative `out` belongs to the session, not to wherever dsh was
+      // launched from: resolving against process.cwd() wrote outside the
+      // workspace and the guard then refused to read it back.
+      const cwd = sessionCwd(exec.agent)
+      if (cwd === undefined) throw new Error('lg_evidence_session: cannot determine the session working directory')
+      const file = isAbsolute(input.out) ? input.out : resolvePath(cwd, input.out)
+      if (!isInside(cwd, file)) {
+        throw new Error(`lg_evidence_session: refusing to write outside the session directory: ${file}`)
+      }
       await mkdir(join(file, '..'), { recursive: true })
       await writeFile(file, artifact.jsonl, 'utf8')
 
