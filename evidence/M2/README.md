@@ -1,82 +1,84 @@
 # M2 验收证据索引
 
-对应 DIRECTIVE v3（频道 `0025`）的 AC-1 至 AC-6。环境：dsh `0.2.1-rc.2`、node `v24.22.0`、pnpm `11.28.5`、
-profile `lg-global-m2`、独立 `DSH_HOME=/var/lib/deepseek-harness/.dsh-global-m2`。除特别注明外全部是 **real**。
+对应 DIRECTIVE v4（频道 `0041`）的 AC-1 至 AC-8。环境见下表；除特别注明外全部是 **real**。
 
-## AC-1 DIRECTIVE v2 AC-2 补齐（会话记录）
+| 项 | 值 |
+| --- | --- |
+| dsh | `0.2.1-rc.2` |
+| node / pnpm | `v24.22.0` / `11.28.5` |
+| 验收 profile | `lg-global-m2`（web app），独立 `DSH_HOME=/var/lib/deepseek-harness/.dsh-global-m2` |
+| 会话驱动 | `packages/dsh-lg-global/driver`（`ctx.agents.create` + `agentPresets.mount`，模型自己发起调用） |
+| 证据导出口径 | 会话事件由**模型自己**调 `lg_evidence_session` 导出；暂停中的会话导不出来（守卫拒绝一切工具），那种情况由 driver 从同一个 session store 导出，并在下表标注 |
 
-| 项 | 内容 |
-|---|---|
-| 证据 | `evidence/v2/session-lg-post-0019.jsonl`、`evidence/v2/session-lg-post-0019.md` |
-| 命令 | `zstd -d` 解压 `session-51cfb27a…/session.v4.jsonl.zstd`，取 `seq` 2660 与 2661 |
-| 结果 | PASS。`tool/call` 有 `callId`、`turn: 18`、`step: 5`、`name: lg_post`；`tool/result` 返回 `posted 0019-local-REPORT.md as 97c81d84b0d0`，与频道 0019 的真实 commit `97c81d84b0d0477…` 一致 |
+## AC 对照
 
-## AC-2 四个接口的探针
+| AC | 要求 | 证据 | 结果 |
+| --- | --- | --- | --- |
+| AC-1 | `docs/spec.md` 与 Human 交付的 SPEC v2 逐字节一致；旧文档标注冲突处以它为准 | `P1-spec.md` | PASS：sha256 `0b39ffcb…`、59542 字节、`cmp` 无差异 |
+| AC-2 | RP-6：writable 暂停、denied 通过、inconclusive 只警告 | `rp6-probe.txt`、`negatives`… | PASS：本机实测 `denied`；可写测试仓库 `writable` → `pause`；单元测试覆盖三态 |
+| AC-3 | lg-repo 支持 `httpProxy`；配置生效证据；单元测试覆盖解析 | `test.txt`、`repo.test.ts` | PASS：`proxyConfig()` → `-c http.proxy=` 进入每个 git 调用；解析用例正反各一 |
+| AC-4 | CH-12 / IN-3：发件副本逐字节比对，篡改后暂停 | `in3-session.jsonl`、`in3-isolation-report.md` | PASS：`archived bytes differ from the saved copy (copy 866B, archive 880B)` |
+| AC-5 | 真实会话的负面与对照（SC-3/SC-6/SC-7/GS-3/RL-1） | `sc3-*`、`sc6-session`、`sc7-*`、`gs3-session`、`rl1-session` | PASS，见需求索引 |
+| AC-6 | 全部需求编号逐行有证据、命令、环境、结果 | 本文件 | PASS |
+| AC-7 | QA-1：install 无错误无警告，build 与 test 全过 | `test.txt` | PASS：**115 个用例**（61 + 14 + 40） |
+| AC-8 | QA-5、QA-6：证据绑定验收时 HEAD；提交前密钥扫描入库 | `secret-scan.txt`、`sc3-sha256.txt` | PASS |
 
-| 项 | 内容 |
-|---|---|
-| 证据 | `evidence/M2/probes.md`、`probe-raw.json`、`probe-boot.log` |
-| 命令 | 探针插件装进 `lg-global-m2` 后启动一次 |
-| 结果 | PASS。四个接口都给出源文件路径与实测行为，并记录两处与方案不符（`selectedDefault` 覆盖、`inspectCompositions` 启动时为空） |
+## 需求索引
 
-## AC-3 负面验收
+会话类证据的 sha256 见 `sc3-sha256.txt`；每份都可与 session store 里的原始文件核对。
 
-原始结果 `evidence/M2/acceptance-raw.json`（逐项含 `id/kind/expectation/isError/detail`），运行日志 `acceptance-run.log`。
+| 编号 | 证据 | 命令 / 环境 | 结果 |
+| --- | --- | --- | --- |
+| GS-1 | `negatives-session.jsonl` | 模型调 `lg_integrity_check` | `ok tool-whitelist: 15 tools, all allowed`，无 shell／终端／后台任务／子 agent 工具 |
+| GS-2 | `gs2-session.jsonl` | `dsh --profile m2-wrong` | `FAIL profile-name: m2-wrong`；`read` 被拒 `paused: profile-name — m2-wrong` |
+| GS-3 | `gs3-session.jsonl` | overlay 重新启用另一 preset 并改默认值；端口 3117 运行前确认空闲 | `FAIL preset-registry: … got: lg-global, standard`；`read` 被拒；日志无 `EADDRINUSE` |
+| PS-1 | `ps1-integrity-off-session.jsonl` | lg-integrity 未激活（缺 `workspace`） | 一直 `not-verified`；`read` 被拒；`lg_integrity_check` 工具不存在 |
+| PS-2 | `negatives-session.jsonl`（正面）、`sc3-negative-session.jsonl`（负面） | 干净检查后暂停解除；暂停期间只有 `lg_integrity_check` 可用 | PASS；单元测试 `pause lifecycle (PS-2)` 另覆盖解除与保持 |
+| RL-1 | `rl1-session.jsonl` | 金丝雀布在 `~/.agents/`、workspace、`drafts/sub/` | 标记 `LG-CANARY-RL1-7f3a` **0 次**出现；角色文件内容 2 次出现 |
+| RL-2 | `rl2-session.jsonl` | 临时移走 `LG-ROLE.md` | `FAIL role-file: … ENOENT`；`read` 被拒 |
+| SC-1 | `negatives-session.jsonl` | `read` 绝对路径（Local 工作目录） | `read path escapes the Global workspace: …/调研-全局与局部Agent框架.md` |
+| SC-2 | `negatives-session.jsonl` | `../outside/secret.txt`、`escape-link/secret.txt` | 两次均 `read path escapes the Global workspace` |
+| SC-3 | `sc3-negative-session.jsonl`、`sc3-control-session.jsonl` | 会话 cwd 在 workspace 外 / 内 | 负面：`paused: session-cwd — …/outside is outside …/workspace`；对照 PASS 且同批操作成功 |
+| SC-4 | `negatives-session.jsonl` | `write not-drafts.txt` | `write may only write inside …/drafts: not-drafts.txt` |
+| SC-5 | `negatives-session.jsonl` | `http://127.0.0.1/`、`file:///etc/passwd`、`http://example.com/` | 三条均被拒，各自命中 allowlist / scheme 规则 |
+| SC-6 | `sc6-session.jsonl` | `127.0.0.1.nip.io`、`lvh.me` **加进白名单** | 仍拒：`resolved 127.0.0.1.nip.io to a private address: 127.0.0.1`；对照公网域名 HTTP 200 |
+| SC-7 | `sc7-session.jsonl`、`sc7-control-session.jsonl` | 测试插件 prepend 的 `pre-execute` 直接返回 `allow` | 负面：`no network verdict for this call`（fail-closed）；对照：同一目标按 allowlist 被拒、公网目标成功 |
+| SC-8 | `test.txt`（`scope.test.ts`） | 单元测试 | PASS：pre-execute 之后改写 url 的调用按无判定拒绝 |
+| RP-1 | `rp1-session.jsonl`、`rl1-session.jsonl` | 模型调 `lg_repo_log` / `lg_repo_show` / `lg_repo_sync` | 返回真实提交与原文件；`mirror 2a93a3795dd4 / remote 2a93a3795dd4 (equal)` |
+| RP-2 | `rp2-integration.txt` | 真实 git + 真实文件系统 | `after tamper: … (moved)` → `after sync 2: … (reverted to upstream)` |
+| RP-3 | `test.txt`（`repo.test.ts`） | 单元测试 | PASS：ssh／`git@`／`file://`／带用户名或令牌的 https 全部拒绝 |
+| RP-4 | `test.txt`（`repo.test.ts`） | 单元测试 | PASS：git 环境无 `HOME`（指向不存在目录）、无 `SSH_AUTH_SOCK`、`GIT_CONFIG_GLOBAL=/dev/null` |
+| RP-5 | `rp5-session.jsonl` | 往镜像配置塞 `http.extraheader` | `PAUSED: mirror-config`；`lg_repo_sync` 与 `read` 均被拒 |
+| RP-6 | `rp6-probe.txt` | 本机实测探针 + 可写测试仓库对照 | `verdict: denied`；对照 `verdict: writable \| branch: pause \| paused: true` |
+| IN-1 | `in1-session.jsonl` | preset 内多一个白名单外工具（`tool-jobs`） | **首次**工具调用即被拒：`paused: tool-whitelist — not allowed: job_output, job_list, job_kill` |
+| IN-2 | `in2-session.jsonl`、`in2-isolation-report.md`、`in2-in3-channel-log.txt` | 启动自检经频道内部接口发报告，不经过模型 | 频道出现 `0001 global ISOLATION_REPORT`，`probes` 逐项与 `lg_integrity_check` 一致 |
+| IN-3 | `in3-session.jsonl`、`in3-isolation-report.md` | 篡改已存档的 global 消息 | `FAIL sent-copies: … archived bytes differ from the saved copy (copy 866B, archive 880B)`；并自动发出 `0002 global ISOLATION_REPORT` |
+| CH-12 | `in3-session.jsonl`、`test.txt`（`channel-runtime.test.ts`） | 同上 + 单元测试 | PASS：副本逐字节保存，篡改即报 |
 
-| 编号 | 操作 | 期望 | 实测报错原文 |
-|---|---|---|---|
-| N1 | 读 Local 工作目录 | 拒绝 | `lg-scope: read path escapes the Global workspace: …/GlobalAndLocalAgent/调研-全局与局部Agent框架.md` |
-| N2 | `../` 逃逸 | 拒绝 | `lg-scope: read path escapes the Global workspace: …/.dsh-global-m2/outside/secret.txt` |
-| N3 | 符号链接逃逸 | 拒绝 | `lg-scope: read path escapes the Global workspace: …/workspace/escape-link/secret.txt` |
-| N4 | `web_fetch` 127.0.0.1 | 拒绝 | `lg-scope: web_fetch host is not in the allowlist: 127.0.0.1` |
-| N5 | `web_fetch` 局域网 | 拒绝 | `lg-scope: web_fetch host is not in the allowlist: 192.168.1.10` |
-| N6 | `web_fetch` file:// | 拒绝 | `lg-scope: web_fetch only allows http and https, got file:` |
-| N7 | `web_fetch` 名单外域名 | 拒绝 | `lg-scope: web_fetch host is not in the allowlist: example.com` |
-| N8 | 会话出现白名单外工具 | 完整性检查失败 | `FAIL tool-whitelist: not allowed: probe_extra_tool` |
-| N9 | 任何途径 push | 必须失败且是权限原因 | `push-probe.md`：只读 key → `denied`（`ERROR: The key you are authenticating with has been marked as read only.`）；默认可写 key → `writable`，探针报错 |
-| N10 | 用户 patch 把默认 preset 改回 standard | 拒绝启动 | `negative-preset-override.log`：`lg-integrity: refusing to work — defaultId=standard expected=lg-global` |
-| N11 | 装进名称不以 lg-global 开头的 profile | 拒绝启动 | `negative-profile-name.log`：`lg-integrity: this profile is named "m2-wrong", but lg-global may only run in a profile starting with "lg-global"` |
+## QA 对照
 
-## AC-4 每项负面对照
+| 编号 | 做法 | 结果 |
+| --- | --- | --- |
+| QA-1 | `pnpm install`、`pnpm -r build`、`pnpm -r test` | `test.txt`：install 0 个 `WARN`/`ERR_`，**115 个用例全过** |
+| QA-2 | 本里程碑每个需求编号在索引里有行 | 见上表 |
+| QA-3 | 每项负面都有目标规则的报错原文 + 对照 | 上表逐条列出原文；对照见 SC-3/SC-6/SC-7/RP-6 与 `negatives-control-session.jsonl` |
+| QA-4 | 会话验收证据是 `lg_evidence_session` 的原始事件 | 见"证据导出口径"；暂停中的会话例外并已标注 |
+| QA-5 | 证据绑定验收时 HEAD | 见下方"绑定" |
+| QA-6 | 无密钥、token、公网部署地址 | `secret-scan.txt` |
+| QA-7 | 所用 dsh 接口有源码引用 | `dsh-interfaces.md` |
 
-| 对照 | 操作 | 实测 |
-|---|---|---|
-| P1 | 读 workspace 内文件 | 成功，返回 `LG-ROLE.md` 内容 |
-| P2 | workspace 内相对路径 | 成功 |
-| P3 | workspace 内符号链接 | 成功 |
-| P4 | `web_fetch` 名单内域名 | 成功，`https://api.github.com/rate_limit` HTTP 200 |
-| P5 | 组合正常时的完整性检查 | `PASS` |
-| N9 的对照 | 同一探针换回可写 key | `writable`——失败确实来自凭据权限，不是探针坏了 |
+## 绑定
 
-## AC-5 仓库正面验收
+- 本文件提交时的 HEAD（验收时 HEAD）见频道 `0061` 的 REPORT `commit` 字段，即本文件所在提交。
+- 会话证据的 sha256 全表在 `sc3-sha256.txt`。
 
-| 编号 | 工具 | 实测 |
-|---|---|---|
-| P6 | `lg_repo_sync` | `mirror 787f1908c68a / remote 787f1908c68a (equal)` |
-| P7 | `lg_repo_log` | 列出 `787f1908… feat: lg-global bundle with preset, scope, repo, and integrity` |
-| P8 | `lg_repo_show` | `README.md` 内容原样返回 |
-| P9 | `lg_repo_diff` | `HEAD~1..HEAD` 的 diff 正常 |
+## 两处此前未实现、本轮补齐的实现项
 
-篡改恢复（`tamper-reset.txt`）：把镜像 `refs/heads/main` 手工指到 `HEAD~1`（`478bd09`），调用 `lg_repo_sync` 后
-镜像回到 `787f190`，与远端一致。
+| 项 | 说明 |
+| --- | --- |
+| RP-5 | SPEC 要求核对镜像自己的 git 配置；实现里原本完全没有，本轮补 `foreignMirrorKeys()` |
+| IN-2 | SPEC 要求启动自检经频道内部接口发 `ISOLATION_REPORT`；`ISOLATION_REPORT` 原本在 lg-global 里一次都没出现过，本轮补 `ChannelRuntime.reportIsolation()` |
 
-## AC-6 测试与索引
+## 一处已知的配置默认值偏差（未改）
 
-| 项 | 内容 |
-|---|---|
-| 命令 | `pnpm -r test` |
-| 结果 | PASS。91 个用例：lg-protocol 61、dsh-lg-global 19、dsh-lg-common 11，0 失败 |
-| 环境 | real |
-
-## 复现
-
-```sh
-export DSH_HOME=/var/lib/deepseek-harness/.dsh-global-m2
-dsh plugin --profile lg-global-m2 add ./packages/dsh-lg-global
-dsh plugin --profile lg-global-m2 add ./packages/dsh-lg-global/probe
-dsh --profile lg-global-m2 --port 3077
-# 结果写在 /tmp/m2/acceptance.json
-```
-
-`lg-global-m2` 的 profile 覆盖层见 `lg-global-m2-cordis.patch.yml`：`workspace`、`remote`、`sshKeyPath` 都在那里，
-bundle 本身不含任何环境配置。
+SPEC 的配置表写 `stateDir` 默认 `$DSH_HOME/lg/state/<仓库标识>`，实现里是 `$DSH_HOME/lg`。本轮没动它——改默认值会让已绑定会话的游标搬家（需要重新 `/lg-bind`），我把这条留给 M3 一起处理，先在此登记，不假装它已经符合规格。
