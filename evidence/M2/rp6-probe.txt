@@ -1,0 +1,4 @@
+verdict: denied
+detail: git push --dry-run https://github.com/codezzzsleep/dsh-local-global.git HEAD:refs/heads/main failed (exit 128): error: unable to read askpass response from '/bin/false' | fatal: could not read Username for 'https://github.com': terminal prompts disabled
+verdict: writable | branch: pause | paused: true | denial: lg-global paused: push-probe — writable: To /tmp/rp6-writable-83AkTQ/bare.git
+ * [new branch]      HEAD -> main
