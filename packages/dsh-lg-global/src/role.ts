@@ -62,6 +62,7 @@ export const inject = ['systemPrompt']
 export function apply(ctx: Context, raw: RawRoleConfig): void {
   const provided = (ctx as unknown as { get?: (name: string) => unknown }).get?.('lgWorkspace')
   const config = resolveRoleConfig(provided === undefined ? raw : { ...raw, workspace: raw.workspace ?? provided })
+
   let text: string
   try {
     text = readFileSync(config.roleFile, 'utf8')

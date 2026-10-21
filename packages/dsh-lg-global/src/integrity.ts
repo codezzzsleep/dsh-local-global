@@ -6,6 +6,8 @@
  * would only keep this plugin from loading — dsh logs a warning and serves the
  * Web UI anyway — so startup failures pause instead of throwing.
  */
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 // Module augmentations only: ctx.tools, agent/* events, and ctx.agentPresets.
 import type {} from '@deepseek-ai/dsh-tools'
@@ -177,6 +179,36 @@ async function checkSentCopies(ctx: Context): Promise<ProbeResult> {
   }
 }
 
+/**
+ * Re-check that the role file lg-role resolved is readable.
+ *
+ * SPEC "lg-role" pauses when the file cannot be read, and RL-2 wants that pause
+ * visible. Re-checking it here keeps the pause honest in both directions: a file
+ * that appears later lifts it, a file that disappears after mount raises it.
+ * @param ctx - plugin context.
+ * @returns one probe result.
+ */
+function checkRoleFile(ctx: Context): ProbeResult {
+  // lg-role cannot publish a service (it lives inside the preset, and preset
+  // services must use isolate realms), so the path is derived the same way
+  // lg-role derives it: the role file name under the workspace.
+  const provided = (ctx as unknown as { get?: (name: string) => unknown }).get?.('lgRoleFile')
+  const file = typeof provided === 'string' && provided.length > 0 ? provided : join(roleWorkspace(ctx) ?? '', 'LG-ROLE.md')
+  try {
+    const text = readFileSync(file, 'utf8')
+    if (text.trim().length === 0) return { name: 'role-file', pass: false, detail: `${file} is empty` }
+    return { name: 'role-file', pass: true, detail: `${file} (${String(text.length)} bytes)` }
+  } catch (error) {
+    return { name: 'role-file', pass: false, detail: `cannot read ${file}: ${error instanceof Error ? error.message : String(error)}` }
+  }
+}
+
+/** The workspace lg-scope published, when it is available. */
+function roleWorkspace(ctx: Context): string | undefined {
+  const workspace = (ctx as unknown as { get?: (name: string) => unknown }).get?.('lgWorkspace')
+  return typeof workspace === 'string' && workspace.length > 0 ? workspace : undefined
+}
+
 function profileName(ctx: Context): string | undefined {
   try {
     const service = ctx.get?.('profileContext') as { name?: string } | undefined
@@ -228,6 +260,7 @@ export function apply(ctx: Context, raw: RawIntegrityConfig): void {
       remember({ name: 'preset-registry', pass: false, detail: error instanceof Error ? error.message : String(error) })
     }
     remember(await checkSentCopies(ctx))
+    remember(checkRoleFile(ctx))
   }
 
   const checkAgent = (agent: unknown): void => {
