@@ -100,3 +100,19 @@ describe('recordProbeOutcome (SPEC lg-repo / RP-6)', () => {
     expect(state.listWarnings()).toEqual([])
   })
 })
+
+describe('foreignMirrorKeys (RP-5)', () => {
+  it('flags a key the plugin did not write and accepts its own keys', async () => {
+    const { mkdtempSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { foreignMirrorKeys, runGit } = await import('../src/repo.js')
+    const dir = mkdtempSync(join(tmpdir(), 'rp5-'))
+    const bare = join(dir, 'mirror.git')
+    await runGit(['init', '--bare', '--initial-branch', 'main', bare])
+    await runGit(['remote', 'add', 'origin', 'https://example.invalid/r.git'], { cwd: bare })
+    expect(await foreignMirrorKeys(bare)).toEqual([])
+    await runGit(['config', '--local', 'http.extraHeader', 'X-Test: 1'], { cwd: bare })
+    expect(await foreignMirrorKeys(bare)).toEqual(['http.extraheader'])
+  })
+})

@@ -169,6 +169,36 @@ export function recordProbeOutcome(state: GuardState, probe: PushProbe): 'pause'
   return 'warn'
 }
 
+/**
+ * Git config keys a mirror may hold.
+ *
+ * `git init --bare` writes the `core.*` defaults, the plugin writes the three
+ * `remote.origin.*` keys (the push URL is deliberately `file:///dev/null`), and
+ * `http.proxy` appears only when a proxy is configured. Anything else means
+ * someone edited the mirror (SPEC "lg-repo", RP-5).
+ */
+export const ALLOWED_MIRROR_KEYS = [
+  'core.repositoryformatversion',
+  'core.filemode',
+  'core.bare',
+  'core.logallrefupdates',
+  'remote.origin.url',
+  'remote.origin.fetch',
+  'remote.origin.pushurl',
+  'http.proxy',
+] as const
+
+/** Config keys in the mirror that the plugin did not write. */
+export async function foreignMirrorKeys(mirrorDir: string): Promise<string[]> {
+  const { stdout } = await runGit(['config', '--local', '--list'], { cwd: mirrorDir })
+  return stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => line.split('=')[0]?.toLowerCase() ?? '')
+    .filter((key) => key.length > 0 && !(ALLOWED_MIRROR_KEYS as readonly string[]).includes(key))
+}
+
 /** `-c http.proxy=` pairs for a configuration, empty when no proxy is set. */
 export function proxyConfig(config: RepoConfig): readonly string[] {
   return config.httpProxy === undefined ? [] : [`http.proxy=${config.httpProxy}`]
@@ -245,6 +275,9 @@ export class RepoMirror {
   /** `-c http.proxy=` pairs, captured once from the configuration. */
   private readonly proxyArgs: readonly string[]
 
+  /** Optional sink for diagnostics; the plugin sets it in its effect. */
+  diagnostic: ((message: string) => void) | undefined
+
   /** Create the bare mirror on first use and neutralize its push URL. */
   async ensure(): Promise<void> {
     await mkdir(this.config.mirrorDir, { recursive: true })
@@ -259,6 +292,16 @@ export class RepoMirror {
     // under an earlier configuration.
     await runGit(['remote', 'set-url', 'origin', this.config.remote], { cwd: this.config.mirrorDir, config: this.proxyArgs }).catch(() => {})
     await runGit(['remote', 'set-url', '--push', 'origin', 'file:///dev/null'], { cwd: this.config.mirrorDir, config: this.proxyArgs }).catch(() => {})
+
+    // SPEC "lg-repo": the mirror's own config may only hold keys this plugin
+    // wrote; checked here so it fires at startup and on every sync (RP-5).
+    const foreign = await foreignMirrorKeys(this.config.mirrorDir)
+    if (foreign.length > 0) {
+      lgState.pause('mirror-config', `mirror config holds keys the plugin did not write: ${foreign.join(', ')}`)
+      this.diagnostic?.(`lg-repo: mirror config holds foreign keys: ${foreign.join(', ')}`)
+    } else {
+      lgState.resume('mirror-config')
+    }
   }
 
   /** Fetch the remote branch and hard-reset the local ref to it. */
@@ -325,6 +368,7 @@ export function apply(ctx: Context, raw: RawRepoConfig): void {
     let disposed = false
     void (async () => {
       try {
+        mirror.diagnostic = (message) => ctx.logger?.('lg-repo')?.warn?.(message)
         await mirror.ensure()
         const probe = await probePushDenied(config)
         const branch = recordProbeOutcome(lgState, probe)
