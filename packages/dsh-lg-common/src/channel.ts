@@ -20,6 +20,7 @@ import {
   formatMessage,
   parseMessage,
   validateMessage,
+  type Approval,
   type MessageError,
   type MessageType,
   type ParsedMessage,
@@ -88,6 +89,8 @@ export class ChannelRuntime {
   /** Copies of every message this side wrote, keyed by its file name (CH-12). */
   private readonly sentDir: string
   private state: PersistedState
+  /** Approval table derived from the last fetch (see {@link approvals}). */
+  private approvalCache: Approval[] = []
   private polling = false
   private reportedMismatch = new Set<string>()
 
@@ -168,6 +171,18 @@ export class ChannelRuntime {
     await this.repo.ensure()
   }
 
+  /**
+   * Unused approvals, as maintained **in memory** from our own fetches.
+   *
+   * SPEC "lg-action-gate" (AG-2) is explicit that the guard reads a table the
+   * channel keeps, not the channel repository: a guard is synchronous and must
+   * never do I/O, and a repo read would also be a fresh, spoofable read.
+   * @returns the approvals that no REPORT has consumed yet.
+   */
+  approvals(): readonly Approval[] {
+    return [...this.approvalCache]
+  }
+
   /** Highest delivered sequence. */
   get cursor(): string {
     return this.state.cursor
@@ -230,6 +245,7 @@ export class ChannelRuntime {
     this.polling = true
     try {
       await this.repo.fetch()
+      this.refreshApprovals()
       await this.reportSentCopyMismatches()
       for (const filename of await this.repo.listMessages()) {
         const seq = filename.slice(0, 4)
@@ -504,6 +520,18 @@ export class ChannelRuntime {
    */
   async readAttachment(path: string): Promise<Buffer | undefined> {
     return await this.repo.readBytes(path)
+  }
+
+  /** Recompute the in-memory approval table from the messages we just fetched. */
+  private refreshApprovals(): void {
+    void this.all()
+      .then((messages) => {
+        this.approvalCache = [...foldState(messages).approvals]
+      })
+      .catch(() => {
+        // A failed refresh leaves the previous table: approvals become neither
+        // more nor less permissive on a transient fetch error.
+      })
   }
 
   /** Every parsed message, ascending. */

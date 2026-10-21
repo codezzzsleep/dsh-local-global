@@ -172,6 +172,22 @@ export function apply(ctx: Context, raw: RawEvidenceConfig = {}): void {
    * one directory deeper.
    * @returns `[topic, path]` pairs, topic relative to the evidence root.
    */
+  /** Every topic directory under the evidence root, at any depth. */
+  const topicsOnDisk = (): [string, string][] => {
+    const found: [string, string][] = []
+    const walk = (dir: string, prefix: string): void => {
+      if (!existsSync(dir)) return
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue
+        const topic = prefix === '' ? entry.name : `${prefix}/${entry.name}`
+        found.push([topic, join(dir, entry.name)])
+        walk(join(dir, entry.name), topic)
+      }
+    }
+    walk(config.evidenceRoot, '')
+    return found
+  }
+
   const manifestsOnDisk = (): [string, string][] => {
     const found: [string, string][] = []
     const walk = (dir: string, prefix: string): void => {
@@ -307,7 +323,19 @@ export function apply(ctx: Context, raw: RawEvidenceConfig = {}): void {
   // Published so lg-channel can refuse a REPORT that cites a stale manifest
   // (EV-4) without either package importing the other.
   ctx.effect(() => {
-    const release = (ctx as unknown as { provide?: (name: string, value: unknown) => () => void }).provide?.('lgEvidence', { staleTopics, digest })
+    const release = (ctx as unknown as { provide?: (name: string, value: unknown) => () => void }).provide?.('lgEvidence', {
+      staleTopics,
+      digest,
+      // RG-1 condition 3: raw evidence written this turn with no manifest beside it.
+      missingManifests: (): string[] => {
+        const orphans: string[] = []
+        if (!existsSync(config.evidenceRoot)) return orphans
+        for (const [topic, dir] of topicsOnDisk()) {
+          if (!existsSync(join(dir, 'manifest.json')) && existsSync(join(dir, 'raw'))) orphans.push(topic)
+        }
+        return orphans
+      },
+    })
     return () => release?.()
   })
 

@@ -8,3 +8,9 @@
       name: '@local-global/dsh-lg-local/evidence'
     - id: lg-patch-apply
       name: '@local-global/dsh-lg-local/patch'
+    - id: lg-report-gate
+      name: '@local-global/dsh-lg-local/report-gate'
+    - id: lg-action-gate
+      name: '@local-global/dsh-lg-local/action-gate'
+    - id: lg-protect
+      name: '@local-global/dsh-lg-local/protect'

@@ -17,6 +17,18 @@
     "./patch": {
       "types": "./lib/patch.d.ts",
       "default": "./lib/patch.js"
+    },
+    "./report-gate": {
+      "types": "./lib/report-gate.d.ts",
+      "default": "./lib/report-gate.js"
+    },
+    "./action-gate": {
+      "types": "./lib/action-gate.d.ts",
+      "default": "./lib/action-gate.js"
+    },
+    "./protect": {
+      "types": "./lib/protect.d.ts",
+      "default": "./lib/protect.js"
     }
   },
   "scripts": {
