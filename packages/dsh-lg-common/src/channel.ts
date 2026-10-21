@@ -296,15 +296,16 @@ export class ChannelRuntime {
     if (typeof id === 'string' && this.state.deliveredIds.includes(id)) return false
 
     // CH-10: a superseded message is shown as superseded and must not be run.
-    const superseded = (await this.all()).flatMap((message) =>
-      Array.isArray(message.fields['supersedes'])
-        ? message.fields['supersedes'].filter((target): target is string => typeof target === 'string')
-        : [],
+    // Name the message that replaces this one, not this one's own id.
+    const everyMessage = await this.all()
+    const replacer = everyMessage.find((message) =>
+      Array.isArray(message.fields['supersedes']) && typeof id === 'string' && message.fields['supersedes'].includes(id),
     )
-    const dead = typeof id === 'string' && superseded.includes(id)
+    const dead = replacer !== undefined
     if (typeof id === 'string') await this.persist({ deliveredIds: [...this.state.deliveredIds, id] })
     if (dead) {
-      this.deliver(agent, `[LG #${seq} ${parsed.message.type} SUPERSEDED by ${String(superseded.find((target) => target === id))}] 不要执行。\n${this.renderDelivery(parsed.message, text)}`)
+      const by = replacer?.fields['id'] ?? replacer?.seq ?? 'a newer message'
+      this.deliver(agent, `[LG #${seq} ${parsed.message.type} SUPERSEDED by ${String(by)}] 不要执行。\n${this.renderDelivery(parsed.message, text)}`)
       return true
     }
     if (parsed.message.type === 'HALT') {

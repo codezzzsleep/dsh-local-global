@@ -54,6 +54,17 @@ export function apply(ctx) {
       const agent = handle.agent
       try { await ctx.agentPresets.select(agent, 'lg-global') } catch { /* recorded by integrity */ }
 
+      // Bind the channel to this session so deliveries have a target. The first
+      // bind starts the cursor at the newest sequence, so anything posted after
+      // this point is what the session actually receives (CH-2).
+      if (scenario.bindChannel) {
+        const channel = ctx.get('lgChannel')
+        if (channel && typeof channel.bind === 'function') {
+          await channel.bind(sessionId)
+          console.log('[driver] bound the channel to this session')
+        }
+      }
+
       for (const task of scenario.tasks) {
         // Same shape lg-channel hands an agent: a frozen user message whose
         // content is text blocks. A bare {role, content: string} is spliced into
@@ -74,7 +85,9 @@ export function apply(ctx) {
         }
       }
 
-      await sleep(1500)
+      // Let channel deliveries settle: wake-class messages start turns, the rest
+      // are injected, and this window is what makes both observable (CH-4).
+      await sleep(scenario.settleMs ?? 1500)
       const jsonl = sessionEvents(dshHome, sessionId)
       mkdirSync(dirname(scenario.out), { recursive: true })
       writeFileSync(scenario.out, jsonl, 'utf8')
