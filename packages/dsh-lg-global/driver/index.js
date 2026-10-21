@@ -43,16 +43,20 @@ export function apply(ctx) {
       const sessionId = randomUUID()
       const handle = await ctx.agents.create({
         sessionId,
-        meta: { cwd: scenario.cwd, agentPreset: 'lg-global' },
+        meta: { cwd: scenario.cwd, ...(scenario.preset === null ? {} : { agentPreset: scenario.preset ?? 'lg-global' }) },
         // Without an explicit provider/model the persona's {{model}} variable has
         // no value and prompt assembly fails before the model is ever called.
         agentOptions: scenario.agentOptions ?? { provider: 'deepseek-official', model: 'deepseek-flash' },
         setup: async (agentCtx) => {
-          await ctx.agentPresets.mount(agentCtx, 'lg-global')
+          const preset = scenario.preset === undefined ? 'lg-global' : scenario.preset
+          if (preset !== null) await ctx.agentPresets.mount(agentCtx, preset)
         },
       })
       const agent = handle.agent
-      try { await ctx.agentPresets.select(agent, 'lg-global') } catch { /* recorded by integrity */ }
+      const presetName = scenario.preset === undefined ? 'lg-global' : scenario.preset
+      if (presetName !== null) {
+        try { await ctx.agentPresets.select(agent, presetName) } catch { /* recorded by integrity */ }
+      }
 
       // Bind the channel to this session so deliveries have a target. The first
       // bind starts the cursor at the newest sequence, so anything posted after

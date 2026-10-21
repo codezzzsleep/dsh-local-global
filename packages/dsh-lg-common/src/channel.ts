@@ -386,11 +386,42 @@ export class ChannelRuntime {
    * @param input - type, fields, body, and optional refs.
    * @returns the sequence, file name, and commit that landed.
    */
+  /**
+   * Refuse a REPORT whose cited manifests have gone stale (EV-4).
+   *
+   * Read through the `lgEvidence` service, so lg-channel needs no dependency on
+   * dsh-lg-local. A missing service simply means no evidence plugin is composed.
+   * @param input - the message about to be written.
+   */
+  private assertEvidenceFresh(input: PostInput): void {
+    if (input.type !== 'REPORT') return
+    const evidence = input.fields['evidence']
+    if (!Array.isArray(evidence)) return
+    const service = (this.ctx as unknown as { get?: (name: string) => unknown }).get?.('lgEvidence') as
+      | { staleTopics?: () => string[] }
+      | undefined
+    if (service?.staleTopics === undefined) return
+    const stale = service.staleTopics()
+    if (stale.length === 0) return
+    // Topics may nest (`M3/ev-real`), so take everything after `evidence/`
+    // minus a trailing `/manifest.json` — a depth-1 split used to yield `M3`
+    // and silently match nothing.
+    const cited = evidence
+      .filter((path): path is string => typeof path === 'string')
+      .map((path) => path.replace(/^.*?evidence\//, '').replace(/\/manifest\.json$/, ''))
+      .filter((topic) => topic.length > 0 && !topic.includes('..'))
+    const bad = cited.filter((topic) => stale.includes(topic))
+    if (bad.length > 0) {
+      throw new Error(`lg-post: refusing a REPORT that cites stale evidence: ${bad.join(', ')} (digest moved; re-run the claim)`)
+    }
+  }
+
   async postAs(sender: Sender, input: PostInput): Promise<PostResult> {
     const fields = { ...input.fields }
     if (input.refs !== undefined && fields['refs'] === undefined) fields['refs'] = [...input.refs]
     const body = input.body ?? ''
     this.probe(sender, input.type, fields, body)
+    this.assertEvidenceFresh(input)
     const result = await this.repo.append((seq) => {
       const rendered = formatMessage({ seq, sender, type: input.type, fields, body })
       return { sender, type: input.type, filename: rendered.filename, text: rendered.text }

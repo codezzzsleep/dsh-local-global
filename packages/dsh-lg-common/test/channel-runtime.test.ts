@@ -183,3 +183,49 @@ describe('wakesGlobal (CH-4)', () => {
     expect(wakesGlobal(notBlocking)).toBe(false)
   })
 })
+
+describe('EV-4: a REPORT citing stale evidence is refused', () => {
+  /** A runtime whose context offers an `lgEvidence` service with fixed topics. */
+  async function runtimeWithEvidence(staleTopics: string[]): Promise<ChannelRuntime> {
+    const ctx = {
+      agents: { get: () => undefined },
+      get: (name: string) => (name === 'lgEvidence' ? { staleTopics: () => staleTopics } : undefined),
+    } as unknown as Context
+    const config = resolveChannelConfig({
+      repo: `file://${remote}`,
+      role: 'local',
+      pollSeconds: 10,
+      relay: true,
+      cloneDir: join(workspace, 'mirror.git'),
+      stateDir: join(workspace, 'state'),
+    })
+    const channel = new ChannelRuntime(ctx, config)
+    await channel.start()
+    return channel
+  }
+
+  const report = (evidence: string[]): Parameters<ChannelRuntime['post']>[0] => ({
+    type: 'REPORT',
+    fields: {
+      refs: ['0001'],
+      commit: '0000000000000000000000000000000000000000',
+      directive_version: 1,
+      evidence,
+      negative_tests: [],
+      checkpoint: true,
+    },
+  })
+
+  it('rejects a citation of a manifest whose digest moved', async () => {
+    const channel = await runtimeWithEvidence(['M3/ev-real'])
+    await expect(channel.post(report(['evidence/M3/ev-real/manifest.json']))).rejects.toThrow(/stale evidence: M3\/ev-real/)
+  })
+
+  it('accepts a citation when nothing is stale, and when no evidence plugin is composed', async () => {
+    const fresh = await runtimeWithEvidence([])
+    await expect(fresh.post(report(['evidence/M3/ev-real/manifest.json']))).resolves.toBeTruthy()
+    // No service at all: the archive path is unchanged.
+    const plain = await runtime()
+    await expect(plain.post(report(['evidence/M3/ev-real/manifest.json']))).resolves.toBeTruthy()
+  })
+})

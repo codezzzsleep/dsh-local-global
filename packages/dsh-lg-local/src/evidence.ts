@@ -100,6 +100,18 @@ export interface ManifestStatus {
   readonly stale: boolean
 }
 
+/**
+ * Split manifests into current and stale by digest (EV-4).
+ *
+ * Pure so the classification can be unit-tested without a live digest command.
+ * @param entries - `[topic, manifestDigest]` pairs.
+ * @param current - the digest right now.
+ * @returns the topics whose digest differs.
+ */
+export function staleOf(entries: readonly (readonly [string, string])[], current: string): string[] {
+  return entries.filter(([, digest]) => digest !== current).map(([topic]) => topic)
+}
+
 /** sha256 of a string, hex. */
 function sha(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex')
@@ -151,6 +163,30 @@ export function apply(ctx: Context, raw: RawEvidenceConfig = {}): void {
   }
 
   const manifestPath = (topic: string): string => join(config.evidenceRoot, topic, 'manifest.json')
+
+  /**
+   * Every manifest under the evidence root, at any depth.
+   *
+   * Topics are allowed to nest (`M3/ev-real`), so a depth-1 readdir misses
+   * them — that was a real bug: the checker reported "none" while manifests sat
+   * one directory deeper.
+   * @returns `[topic, path]` pairs, topic relative to the evidence root.
+   */
+  const manifestsOnDisk = (): [string, string][] => {
+    const found: [string, string][] = []
+    const walk = (dir: string, prefix: string): void => {
+      if (!existsSync(dir)) return
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue
+        const topic = prefix === '' ? entry.name : `${prefix}/${entry.name}`
+        const path = join(dir, entry.name, 'manifest.json')
+        if (existsSync(path)) found.push([topic, path])
+        walk(join(dir, entry.name), topic)
+      }
+    }
+    walk(config.evidenceRoot, '')
+    return found
+  }
 
   ctx.tools.register({
     name: 'lg_evidence_add',
@@ -258,6 +294,23 @@ export function apply(ctx: Context, raw: RawEvidenceConfig = {}): void {
     },
   })
 
+  /** Topics whose manifest no longer matches the current digest. */
+  const staleTopics = (): string[] => {
+    const current = digest()
+    const entries: [string, string][] = manifestsOnDisk().map(([topic, path]) => {
+      const manifest = JSON.parse(readFileSync(path, 'utf8')) as Manifest
+      return [topic, manifest.digest] as [string, string]
+    })
+    return staleOf(entries, current)
+  }
+
+  // Published so lg-channel can refuse a REPORT that cites a stale manifest
+  // (EV-4) without either package importing the other.
+  ctx.effect(() => {
+    const release = (ctx as unknown as { provide?: (name: string, value: unknown) => () => void }).provide?.('lgEvidence', { staleTopics, digest })
+    return () => release?.()
+  })
+
   ctx.tools.register({
     name: 'lg_evidence_check',
     description: 'Scan every evidence manifest and mark the ones whose digest no longer matches the current one as stale.',
@@ -286,15 +339,10 @@ export function apply(ctx: Context, raw: RawEvidenceConfig = {}): void {
     },
     async execute() {
       const current = digest()
-      const manifests: ManifestStatus[] = []
-      if (existsSync(config.evidenceRoot)) {
-        for (const topic of readdirSync(config.evidenceRoot)) {
-          const path = manifestPath(topic)
-          if (!existsSync(path)) continue
-          const manifest = JSON.parse(readFileSync(path, 'utf8')) as Manifest
-          manifests.push({ topic, path, digest: manifest.digest, current, stale: manifest.digest !== current })
-        }
-      }
+      const manifests: ManifestStatus[] = manifestsOnDisk().map(([topic, path]) => {
+        const manifest = JSON.parse(readFileSync(path, 'utf8')) as Manifest
+        return { topic, path, digest: manifest.digest, current, stale: manifest.digest !== current }
+      })
       return { current, manifests }
     },
   })

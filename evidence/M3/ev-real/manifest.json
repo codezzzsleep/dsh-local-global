@@ -1,0 +1,27 @@
+{
+  "topic": "M3/ev-real",
+  "claim": "the whole test suite passes",
+  "environment": "real",
+  "command": "pnpm -r test 2>&1 | tail -20",
+  "commit": "13ec16407f59774adb306af698052d6f5b8091ef",
+  "digest": "13ec16407f59774adb306af698052d6f5b8091ef",
+  "raw": [
+    {
+      "path": "/var/lib/deepseek-harness/GlobalAndLocalAgent/dsh-local-global/evidence/M3/ev-real/raw/command-output.txt",
+      "sha256": "81075b91e9c76af8a23c6e1e9223027fa65887369ba0fc30a8f86b340b11daec",
+      "bytes": 1448,
+      "producedByTool": {
+        "command": "pnpm -r test 2>&1 | tail -20",
+        "exitCode": 0,
+        "startedAt": "2026-10-21T06:14:05.102Z",
+        "endedAt": "2026-10-21T06:14:09.231Z",
+        "hostname": "hcss-ecs-0494",
+        "dshVersion": "0.2.1-rc.2"
+      }
+    }
+  ],
+  "negativeTests": [],
+  "controls": [],
+  "result": "see raw",
+  "writtenAt": "2026-10-21T06:14:09.330Z"
+}

@@ -30,3 +30,23 @@ describe('resolveEvidenceConfig', () => {
     expect(config.secretPatterns).toEqual(['x-token'])
   })
 })
+
+describe('stale classification (EV-4)', () => {
+  it('marks only the manifests whose digest moved', async () => {
+    const { staleOf } = await import('../src/evidence.js')
+    const entries: [string, string][] = [
+      ['m3-protocol', 'abc'],
+      ['m3-evidence', 'def'],
+    ]
+    expect(staleOf(entries, 'abc')).toEqual(['m3-evidence'])
+    expect(staleOf(entries, 'abc')).toEqual(['m3-evidence'])
+    expect(staleOf(entries, 'zzz')).toEqual(['m3-protocol', 'm3-evidence'])
+    expect(staleOf(entries, 'abc')).not.toContain('m3-protocol')
+  })
+
+  it('treats every manifest as stale once the digest moves, and none when it matches', async () => {
+    const { staleOf } = await import('../src/evidence.js')
+    expect(staleOf([], 'abc')).toEqual([])
+    expect(staleOf([['t', 'abc']], 'abc')).toEqual([])
+  })
+})

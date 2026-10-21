@@ -47,16 +47,20 @@ export const name = 'lg-evidence'
 export const inject = ['tools']
 
 /** One decompressed session file, ready to be written out. */
-interface SessionArtifact {
+export interface SessionArtifact {
   readonly sessionId: string
   readonly source: string
   readonly jsonl: string
 }
 
 /** Where dsh keeps session event logs. */
-function sessionsRoot(): string {
-  const home = process.env['DSH_HOME']
+export function sessionsRoot(home = process.env['DSH_HOME']): string {
   return join(home === undefined || home.length === 0 ? join(homedir(), '.dsh') : home, 'sessions')
+}
+
+/** The store root dsh uses for this process. */
+function defaultSessionsRoot(): string {
+  return sessionsRoot()
 }
 
 /** Read the session id dsh recorded for this agent. */
@@ -80,7 +84,7 @@ function sessionId(agent: unknown): string | undefined {
  * @param id - session identity.
  * @returns the artifact, or an explanatory error.
  */
-async function readSessionArtifact(root: string, id: string): Promise<SessionArtifact | string> {
+export async function readSessionArtifact(root: string, id: string): Promise<SessionArtifact | string> {
   let workspaces: string[]
   try {
     workspaces = await readdir(root)
@@ -153,7 +157,7 @@ export function apply(ctx: Context): void {
       const id = typeof input.session === 'string' && input.session.length > 0 ? input.session : sessionId(exec.agent)
       if (id === undefined) throw new Error('lg_evidence_session: cannot determine the calling session id')
 
-      const artifact = await readSessionArtifact(sessionsRoot(), id)
+      const artifact = await readSessionArtifact(defaultSessionsRoot(), id)
       if (typeof artifact === 'string') throw new Error(artifact)
 
       // A relative `out` belongs to the session, not to wherever dsh was
