@@ -21,7 +21,11 @@
       "types": "./lib/role.d.ts",
       "default": "./lib/role.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./evidence": {
+      "types": "./lib/evidence.d.ts",
+      "default": "./lib/evidence.js"
+    }
   },
   "files": [
     "lib/**/*.js",
