@@ -397,6 +397,24 @@ export class ChannelRuntime {
     return formatMessage({ seq, sender, type, fields, body }).text
   }
 
+  /**
+   * Post one ISOLATION_REPORT on this side's behalf, without a model.
+   *
+   * SPEC "lg-integrity": the startup result is sent through the channel's own
+   * interface, so the report exists even if the model never runs a tool.
+   * @param probes - one entry per check that ran.
+   * @param body - optional markdown body.
+   * @returns the posted message, or `undefined` when nothing was sent.
+   */
+  async reportIsolation(probes: readonly unknown[], body?: string): Promise<PostResult | undefined> {
+    if (this.config.role === undefined) return undefined
+    return await this.post({
+      type: 'ISOLATION_REPORT',
+      fields: { probes },
+      ...(body === undefined ? {} : { body }),
+    })
+  }
+
   /** Every parsed message, ascending. */
   async all(): Promise<ParsedMessage[]> {
     const messages: ParsedMessage[] = []

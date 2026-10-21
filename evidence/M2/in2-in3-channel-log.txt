@@ -1,0 +1,3 @@
+818e0c6 msg 0002 global ISOLATION_REPORT
+5f14b9c tamper
+7f7c9ce msg 0001 global ISOLATION_REPORT

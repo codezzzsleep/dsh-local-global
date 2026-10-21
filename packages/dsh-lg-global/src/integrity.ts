@@ -203,6 +203,30 @@ function checkRoleFile(ctx: Context): ProbeResult {
   }
 }
 
+/**
+ * Send the startup check result as an ISOLATION_REPORT (IN-2).
+ *
+ * Uses the `lgChannel` service so the two bundles stay independent. When no
+ * channel is composed the report has nowhere to go; that is logged, not fatal.
+ * @param ctx - plugin context.
+ * @param probes - the checks that just ran.
+ */
+async function reportStartupIsolation(ctx: Context, probes: readonly ProbeResult[]): Promise<void> {
+  const channel = (ctx as unknown as { get?: (name: string) => unknown }).get?.('lgChannel') as
+    | { reportIsolation?: (probes: readonly unknown[], body?: string) => Promise<unknown> }
+    | undefined
+  if (channel?.reportIsolation === undefined) return
+  try {
+    const posted = await channel.reportIsolation(
+      probes.map((entry) => ({ name: entry.name, expected: 'pass', actual: entry.detail, pass: entry.pass })),
+      `启动自检：${String(probes.filter((entry) => entry.pass).length)}/${String(probes.length)} 项通过。`,
+    )
+    ctx.logger?.('lg-integrity')?.info?.(`lg-integrity: startup ISOLATION_REPORT ${posted === undefined ? 'skipped' : 'sent'}`)
+  } catch (error) {
+    ctx.logger?.('lg-integrity')?.warn?.(`lg-integrity: startup ISOLATION_REPORT failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
 /** The workspace lg-scope published, when it is available. */
 function roleWorkspace(ctx: Context): string | undefined {
   const workspace = (ctx as unknown as { get?: (name: string) => unknown }).get?.('lgWorkspace')
@@ -284,12 +308,15 @@ export function apply(ctx: Context, raw: RawIntegrityConfig): void {
     // The preset registry publishes its definitions asynchronously; checking in
     // the same tick would see an empty registry and pause for no reason.
     const timer = setTimeout(() => {
-      void checkRegistryAndComposition().then(() => {
+      void checkRegistryAndComposition().then(async () => {
         const probes = [...results.values()]
         // A clean run is exactly what lifts `not-verified`; testing `paused`
         // here made the un-pause unreachable (the pause could only end after it
         // had already ended).
         if (probes.length > 0 && probes.every((entry) => entry.pass)) lgState.markVerified()
+        // SPEC "lg-integrity": send the startup result as an ISOLATION_REPORT
+        // through the channel's own interface, not through the model (IN-2).
+        await reportStartupIsolation(ctx, probes)
       })
     }, 2000)
     return () => clearTimeout(timer)
