@@ -3,3 +3,5 @@
 28ae5a9f6fd8573616683bf7faac9edf231b9c10b1d4c1f9f93161918059c7fb  evidence/M3/ev-real/manifest.json
 81075b91e9c76af8a23c6e1e9223027fa65887369ba0fc30a8f86b340b11daec  evidence/M3/ev-real/raw/command-output.txt
 5d2254692aeb3dcba175becec2daa9e1ac189210fb1d2ce392bb1edbd4b8cfd5  evidence/M3/ev-leaky/manifest.json
+67d49613cdaf1a2e2c86e64726b1e4e37e3212880fa1d0b6724cf15c12161602  evidence/M3/ev4-stale-session.jsonl
+a942b9162c695966687b0a794cd947fed153c17e68f3ab06a81fc0f0bef27581  evidence/M3/ev-session.jsonl
