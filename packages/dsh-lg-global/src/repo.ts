@@ -13,7 +13,7 @@ import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { isAbsolute, join, resolve as resolvePath } from 'node:path'
 import { tmpdir } from 'node:os'
-import { lgState } from './state.js'
+import { GuardState, lgState } from './state.js'
 import type { Context } from '@deepseek-ai/cordis'
 // Module augmentation only: `ctx.tools` and the tools/* events live in dsh-tools.
 import type {} from '@deepseek-ai/dsh-tools'
@@ -25,6 +25,8 @@ export interface RepoConfig {
   readonly branch: string
   /** Bare mirror directory. */
   readonly mirrorDir: string
+  /** Optional HTTP proxy for every git call, passed as `-c http.proxy=`. */
+  readonly httpProxy?: string
 }
 
 /** Raw plugin config. */
@@ -33,6 +35,7 @@ export interface RawRepoConfig {
   readonly branch?: unknown
   readonly mirrorDir?: unknown
   readonly workspace?: unknown
+  readonly httpProxy?: unknown
 }
 
 /** One git invocation result. */
@@ -50,7 +53,14 @@ export interface GitResult {
  */
 export async function runGit(
   args: readonly string[],
-  options: { cwd?: string; input?: string; env?: Readonly<Record<string, string>>; timeoutMs?: number } = {},
+  options: {
+    cwd?: string
+    input?: string
+    env?: Readonly<Record<string, string>>
+    timeoutMs?: number
+    /** Extra `-c key=value` pairs, appended after the fixed ones. */
+    config?: readonly string[]
+  } = {},
 ): Promise<GitResult> {
   return await new Promise<GitResult>((resolve, reject) => {
     // A curated environment: inheriting process.env would hand Global the same
@@ -69,7 +79,8 @@ export async function runGit(
       XDG_CONFIG_HOME: '/nonexistent-lg-home',
       ...options.env,
     }
-    const child = spawn('git', ['-c', 'protocol.file.allow=always', '-c', 'credential.helper=', ...args], {
+    const configArgs = (options.config ?? []).flatMap((pair) => ['-c', pair])
+    const child = spawn('git', ['-c', 'protocol.file.allow=always', '-c', 'credential.helper=', ...configArgs, ...args], {
       cwd: options.cwd,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -123,7 +134,44 @@ export function resolveRepoConfig(raw: RawRepoConfig): RepoConfig {
   if (!raw.remote.startsWith('https://')) {
     throw new TypeError('lg-repo: M2 implements and accepts https remotes only; file:// hosting is still undecided')
   }
-  return { remote: raw.remote, branch, mirrorDir }
+  let httpProxy: string | undefined
+  if (raw.httpProxy !== undefined) {
+    if (typeof raw.httpProxy !== 'string' || !/^https?:\/\//.test(raw.httpProxy)) {
+      throw new TypeError('lg-repo: "httpProxy" must be an http(s) URL, e.g. http://127.0.0.1:7890')
+    }
+    httpProxy = raw.httpProxy
+  }
+  return { remote: raw.remote, branch, mirrorDir, ...(httpProxy === undefined ? {} : { httpProxy }) }
+}
+
+/**
+ * Apply one probe outcome to the shared state.
+ *
+ * The rule from SPEC "lg-repo": `writable` pauses, `denied` passes,
+ * `inconclusive` is a warning that never pauses.
+ * @param state - the shared guard state.
+ * @param probe - the probe outcome and its raw detail.
+ * @returns which branch was taken, for the caller's logging.
+ */
+export function recordProbeOutcome(state: GuardState, probe: PushProbe): 'pause' | 'pass' | 'warn' {
+  if (probe.verdict === 'writable') {
+    state.pause('push-probe', `writable: ${probe.detail}`)
+    state.clearWarning('push-probe')
+    return 'pause'
+  }
+  if (probe.verdict === 'denied') {
+    state.resume('push-probe')
+    state.clearWarning('push-probe')
+    return 'pass'
+  }
+  state.resume('push-probe')
+  state.warn('push-probe', `inconclusive: ${probe.detail.slice(0, 300)}`)
+  return 'warn'
+}
+
+/** `-c http.proxy=` pairs for a configuration, empty when no proxy is set. */
+export function proxyConfig(config: RepoConfig): readonly string[] {
+  return config.httpProxy === undefined ? [] : [`http.proxy=${config.httpProxy}`]
 }
 
 /** Outcome of the write-capability probe. */
@@ -155,6 +203,7 @@ const PERMISSION_MARKERS = [
  * @returns the verdict and the original git output.
  */
 export async function probePushDenied(config: RepoConfig): Promise<PushProbe> {
+  const proxyArgs = proxyConfig(config)
   // A scratch repository with one commit: the probe must not depend on the
   // mirror having a HEAD, or the first boot can only produce `inconclusive`.
   const scratch = mkdtempSync(join(tmpdir(), 'lg-push-probe-'))
@@ -165,11 +214,11 @@ export async function probePushDenied(config: RepoConfig): Promise<PushProbe> {
     GIT_COMMITTER_EMAIL: 'lg-probe@invalid',
   }
   try {
-    await runGit(['init', '--quiet', '--initial-branch', config.branch, scratch], { env: identity })
-    const tree = (await runGit(['mktree'], { cwd: scratch, input: '', env: identity })).stdout.trim()
-    const commit = (await runGit(['commit-tree', tree, '-m', 'probe'], { cwd: scratch, env: identity })).stdout.trim()
-    await runGit(['update-ref', `refs/heads/${config.branch}`, commit], { cwd: scratch, env: identity })
-    const result = await runGit(['push', '--dry-run', config.remote, `HEAD:refs/heads/${config.branch}`], { cwd: scratch })
+    await runGit(['init', '--quiet', '--initial-branch', config.branch, scratch], { env: identity, config: proxyArgs })
+    const tree = (await runGit(['mktree'], { cwd: scratch, input: '', env: identity, config: proxyArgs })).stdout.trim()
+    const commit = (await runGit(['commit-tree', tree, '-m', 'probe'], { cwd: scratch, env: identity, config: proxyArgs })).stdout.trim()
+    await runGit(['update-ref', `refs/heads/${config.branch}`, commit], { cwd: scratch, env: identity, config: proxyArgs })
+    const result = await runGit(['push', '--dry-run', config.remote, `HEAD:refs/heads/${config.branch}`], { cwd: scratch, config: proxyArgs })
     return { verdict: 'writable', exitCode: 0, detail: `${result.stdout}${result.stderr}`.trim() }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -190,37 +239,41 @@ export class RepoMirror {
 
   constructor(config: RepoConfig) {
     this.config = config
+    this.proxyArgs = proxyConfig(config)
   }
+
+  /** `-c http.proxy=` pairs, captured once from the configuration. */
+  private readonly proxyArgs: readonly string[]
 
   /** Create the bare mirror on first use and neutralize its push URL. */
   async ensure(): Promise<void> {
     await mkdir(this.config.mirrorDir, { recursive: true })
     if (!existsSync(join(this.config.mirrorDir, 'HEAD'))) {
       await runGit(['init', '--bare', '--initial-branch', this.config.branch, this.config.mirrorDir])
-      await runGit(['remote', 'add', 'origin', this.config.remote], { cwd: this.config.mirrorDir })
+      await runGit(['remote', 'add', 'origin', this.config.remote], { cwd: this.config.mirrorDir, config: this.proxyArgs })
       // Defense in depth: even a code path that tried to push through origin
       // would hit an unusable URL. The probe below deliberately bypasses it.
-      await runGit(['remote', 'set-url', '--push', 'origin', 'file:///dev/null'], { cwd: this.config.mirrorDir })
+      await runGit(['remote', 'set-url', '--push', 'origin', 'file:///dev/null'], { cwd: this.config.mirrorDir, config: this.proxyArgs })
     }
     // Keep the mirror pointed at the configured remote even if it was created
     // under an earlier configuration.
-    await runGit(['remote', 'set-url', 'origin', this.config.remote], { cwd: this.config.mirrorDir }).catch(() => {})
-    await runGit(['remote', 'set-url', '--push', 'origin', 'file:///dev/null'], { cwd: this.config.mirrorDir }).catch(() => {})
+    await runGit(['remote', 'set-url', 'origin', this.config.remote], { cwd: this.config.mirrorDir, config: this.proxyArgs }).catch(() => {})
+    await runGit(['remote', 'set-url', '--push', 'origin', 'file:///dev/null'], { cwd: this.config.mirrorDir, config: this.proxyArgs }).catch(() => {})
   }
 
   /** Fetch the remote branch and hard-reset the local ref to it. */
   async sync(): Promise<{ head: string; remoteHead: string }> {
     await this.ensure()
-    await runGit(['fetch', '--prune', 'origin', `+refs/heads/*:refs/remotes/origin/*`], { cwd: this.config.mirrorDir })
-    const remoteHead = (await runGit(['rev-parse', `origin/${this.config.branch}`], { cwd: this.config.mirrorDir })).stdout.trim()
-    await runGit(['update-ref', `refs/heads/${this.config.branch}`, remoteHead], { cwd: this.config.mirrorDir })
-    const head = (await runGit(['rev-parse', `refs/heads/${this.config.branch}`], { cwd: this.config.mirrorDir })).stdout.trim()
+    await runGit(['fetch', '--prune', 'origin', `+refs/heads/*:refs/remotes/origin/*`], { cwd: this.config.mirrorDir, config: this.proxyArgs })
+    const remoteHead = (await runGit(['rev-parse', `origin/${this.config.branch}`], { cwd: this.config.mirrorDir, config: this.proxyArgs })).stdout.trim()
+    await runGit(['update-ref', `refs/heads/${this.config.branch}`, remoteHead], { cwd: this.config.mirrorDir, config: this.proxyArgs })
+    const head = (await runGit(['rev-parse', `refs/heads/${this.config.branch}`], { cwd: this.config.mirrorDir, config: this.proxyArgs })).stdout.trim()
     return { head, remoteHead }
   }
 
   /** Current mirror HEAD. */
   async head(): Promise<string> {
-    return (await runGit(['rev-parse', `refs/heads/${this.config.branch}`], { cwd: this.config.mirrorDir })).stdout.trim()
+    return (await runGit(['rev-parse', `refs/heads/${this.config.branch}`], { cwd: this.config.mirrorDir, config: this.proxyArgs })).stdout.trim()
   }
 
   /** List commits, newest first. */
@@ -241,7 +294,7 @@ export class RepoMirror {
   async diff(from: string, to: string, path?: string): Promise<string> {
     const args = ['diff', from, to]
     if (path !== undefined) args.push('--', path)
-    return (await runGit(args, { cwd: this.config.mirrorDir })).stdout
+    return (await runGit(args, { cwd: this.config.mirrorDir, config: this.proxyArgs })).stdout
   }
 
   /** Read a file at a commit, byte-exact. */
@@ -274,11 +327,11 @@ export function apply(ctx: Context, raw: RawRepoConfig): void {
       try {
         await mirror.ensure()
         const probe = await probePushDenied(config)
-        if (probe.verdict !== 'denied') {
-          lgState.pause('push-probe', `${probe.verdict}: ${probe.detail}`)
-          ctx.logger?.('lg-repo')?.error?.(`lg-repo: push probe ${probe.verdict} — Global paused: ${probe.detail.slice(0, 200)}`)
-        } else {
-          lgState.resume('push-probe')
+        const branch = recordProbeOutcome(lgState, probe)
+        if (branch === 'pause') {
+          ctx.logger?.('lg-repo')?.error?.(`lg-repo: push probe writable — Global paused: ${probe.detail.slice(0, 200)}`)
+        } else if (branch === 'warn') {
+          ctx.logger?.('lg-repo')?.warn?.(`lg-repo: push probe inconclusive — ${probe.detail.slice(0, 200)}`)
         }
         if (!disposed) ctx.logger?.('lg-repo')?.info?.(`lg-repo: push probe ${probe.verdict}`)
       } catch (error) {

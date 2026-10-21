@@ -228,6 +228,14 @@ export function apply(ctx: Context, raw: RawIntegrityConfig): void {
         properties: {
           paused: { type: 'boolean' },
           pass: { type: 'boolean' },
+          warnings: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { name: { type: 'string' }, detail: { type: 'string' } },
+              required: ['name', 'detail'],
+            },
+          },
           probes: {
             type: 'array',
             items: {
@@ -237,12 +245,16 @@ export function apply(ctx: Context, raw: RawIntegrityConfig): void {
             },
           },
         },
-        required: ['paused', 'pass', 'probes'],
+        required: ['paused', 'pass', 'warnings', 'probes'],
       },
-      render: (_args: unknown, value: { paused: boolean; pass: boolean; probes: ProbeResult[] }) => [
+      render: (_args: unknown, value: { paused: boolean; pass: boolean; warnings: { name: string; detail: string }[]; probes: ProbeResult[] }) => [
         {
           type: 'text' as const,
-          text: `${value.paused ? 'PAUSED' : value.pass ? 'PASS' : 'FAIL'}\n${value.probes.map((p) => `${p.pass ? 'ok' : 'FAIL'} ${p.name}: ${p.detail}`).join('\n')}`,
+          text: [
+            value.paused ? 'PAUSED' : value.pass ? 'PASS' : 'FAIL',
+            ...value.probes.map((p) => `${p.pass ? 'ok' : 'FAIL'} ${p.name}: ${p.detail}`),
+            ...value.warnings.map((w) => `warn ${w.name}: ${w.detail}`),
+          ].join('\n'),
         },
       ],
     },
@@ -251,7 +263,8 @@ export function apply(ctx: Context, raw: RawIntegrityConfig): void {
       const probes = [...results.values()]
       const clean = probes.length > 0 && probes.every((entry) => entry.pass) && !lgState.paused
       if (clean) lgState.markVerified()
-      return { paused: lgState.paused, pass: clean, probes }
+      const warnings = lgState.listWarnings().map((warning) => ({ name: warning.code, detail: warning.detail }))
+      return { paused: lgState.paused, pass: clean, warnings, probes }
     },
   } as unknown as Parameters<Context['tools']['register']>[0])
 }

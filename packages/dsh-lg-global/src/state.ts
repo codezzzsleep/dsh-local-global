@@ -19,6 +19,7 @@ export class GuardState {
   private reasons: PauseReason[] = [
     { code: 'not-verified', detail: 'integrity has not reported a clean composition yet', at: new Date(0).toISOString() },
   ]
+  private warnings: PauseReason[] = []
 
   /** Record a failure; repeated codes replace their previous detail. */
   pause(code: string, detail: string): void {
@@ -57,6 +58,24 @@ export class GuardState {
   /** Snapshot for tools and logs. */
   list(): readonly PauseReason[] {
     return [...this.reasons]
+  }
+
+  /** Record a non-blocking finding; surfaced by `lg_integrity_check` only. */
+  warn(code: string, detail: string): void {
+    const entry: PauseReason = { code, detail, at: new Date().toISOString() }
+    const index = this.warnings.findIndex((warning) => warning.code === code)
+    if (index === -1) this.warnings.push(entry)
+    else this.warnings[index] = entry
+  }
+
+  /** Drop one warning after a later run resolves it. */
+  clearWarning(code: string): void {
+    this.warnings = this.warnings.filter((warning) => warning.code !== code)
+  }
+
+  /** Snapshot of warnings, newest state per code. */
+  listWarnings(): readonly PauseReason[] {
+    return [...this.warnings]
   }
 
   /** Human-readable denial reason. */
