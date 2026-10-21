@@ -1,0 +1,3 @@
+- insert:
+    - id: lg-m2-driver
+      name: '@local-global/lg-m2-driver'

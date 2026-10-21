@@ -34,7 +34,13 @@ export interface RawIntegrityConfig {
   readonly workspace?: unknown
 }
 
-/** Default tool whitelist (docs/implementation.md, lg-integrity step 1). */
+/**
+ * Default tool whitelist: the filesystem and web tools a Global session may
+ * hold, plus every tool this project provides (SPEC "Global 沙箱": the session
+ * whitelist is those nine names "以及本项目提供的 lg_* 工具"). The `lg_` prefix
+ * rule is applied in {@link checkTools}, so a new project tool does not have to
+ * be listed here to be legal.
+ */
 export const DEFAULT_ALLOWED_TOOLS = [
   'read',
   'read_image',
@@ -124,7 +130,9 @@ export function checkCwd(cwd: string | undefined, workspace: string): ProbeResul
  * @returns one probe result.
  */
 export function checkTools(visible: readonly string[], allowed: readonly string[]): ProbeResult {
-  const extra = visible.filter((toolName) => !allowed.includes(toolName))
+  // SPEC "Global 沙箱" allows the listed nine names plus any `lg_` tool this
+  // project ships; anything else visible in the preset scope is a violation.
+  const extra = visible.filter((toolName) => !allowed.includes(toolName) && !toolName.startsWith('lg_'))
   return {
     name: 'tool-whitelist',
     pass: extra.length === 0,
@@ -245,7 +253,10 @@ export function apply(ctx: Context, raw: RawIntegrityConfig): void {
     const timer = setTimeout(() => {
       void checkRegistryAndComposition().then(() => {
         const probes = [...results.values()]
-        if (probes.length > 0 && probes.every((entry) => entry.pass) && !lgState.paused) lgState.markVerified()
+        // A clean run is exactly what lifts `not-verified`; testing `paused`
+        // here made the un-pause unreachable (the pause could only end after it
+        // had already ended).
+        if (probes.length > 0 && probes.every((entry) => entry.pass)) lgState.markVerified()
       })
     }, 2000)
     return () => clearTimeout(timer)
@@ -266,6 +277,14 @@ export function apply(ctx: Context, raw: RawIntegrityConfig): void {
         properties: {
           paused: { type: 'boolean' },
           pass: { type: 'boolean' },
+          reasons: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { name: { type: 'string' }, detail: { type: 'string' } },
+              required: ['name', 'detail'],
+            },
+          },
           warnings: {
             type: 'array',
             items: {
@@ -283,13 +302,16 @@ export function apply(ctx: Context, raw: RawIntegrityConfig): void {
             },
           },
         },
-        required: ['paused', 'pass', 'warnings', 'probes'],
+        required: ['paused', 'pass', 'reasons', 'warnings', 'probes'],
       },
-      render: (_args: unknown, value: { paused: boolean; pass: boolean; warnings: { name: string; detail: string }[]; probes: ProbeResult[] }) => [
+      render: (
+        _args: unknown,
+        value: { paused: boolean; pass: boolean; reasons: { name: string; detail: string }[]; warnings: { name: string; detail: string }[]; probes: ProbeResult[] },
+      ) => [
         {
           type: 'text' as const,
           text: [
-            value.paused ? 'PAUSED' : value.pass ? 'PASS' : 'FAIL',
+            value.paused ? `PAUSED${value.reasons.length > 0 ? `: ${value.reasons.map((r) => r.name).join(', ')}` : ''}` : value.pass ? 'PASS' : 'FAIL',
             ...value.probes.map((p) => `${p.pass ? 'ok' : 'FAIL'} ${p.name}: ${p.detail}`),
             ...value.warnings.map((w) => `warn ${w.name}: ${w.detail}`),
           ].join('\n'),
@@ -299,10 +321,11 @@ export function apply(ctx: Context, raw: RawIntegrityConfig): void {
     async execute() {
       await checkRegistryAndComposition()
       const probes = [...results.values()]
-      const clean = probes.length > 0 && probes.every((entry) => entry.pass) && !lgState.paused
+      const clean = probes.length > 0 && probes.every((entry) => entry.pass)
       if (clean) lgState.markVerified()
       const warnings = lgState.listWarnings().map((warning) => ({ name: warning.code, detail: warning.detail }))
-      return { paused: lgState.paused, pass: clean, warnings, probes }
+      const reasons = lgState.list().map((reason) => ({ name: reason.code, detail: reason.detail }))
+      return { paused: lgState.paused, pass: clean, reasons, warnings, probes }
     },
   } as unknown as Parameters<Context['tools']['register']>[0])
 }

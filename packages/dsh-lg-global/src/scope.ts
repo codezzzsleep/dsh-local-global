@@ -246,6 +246,11 @@ export function apply(ctx: Context, raw: RawScopeConfig): void {
   const config = resolveScopeConfig(raw)
   const verdicts = new Map<string, NetworkVerdict>()
 
+  ctx.effect(() => {
+    const release = (ctx as unknown as { provide?: (name: string, value: unknown) => () => void }).provide?.('lgWorkspace', config.workspace)
+    return () => release?.()
+  })
+
   ctx.on('tools/pre-execute', async (exec, next) => {
     if (exec.name === 'web_fetch') {
       const args = exec.arguments

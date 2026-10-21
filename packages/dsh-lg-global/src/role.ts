@@ -16,7 +16,9 @@ import { lgState } from './state.js'
 /** Raw plugin config. */
 export interface RawRoleConfig {
   readonly roleFile?: unknown
-  /** Base directory for a relative `roleFile`; defaults to the workspace. */
+  /** The Global workspace; a relative `roleFile` is resolved against it. */
+  readonly workspace?: unknown
+  /** Explicit base directory; wins over `workspace` when both are given. */
   readonly baseDir?: unknown
 }
 
@@ -33,7 +35,12 @@ export interface RoleConfig {
  */
 export function resolveRoleConfig(raw: RawRoleConfig): RoleConfig {
   const file = typeof raw.roleFile === 'string' && raw.roleFile.length > 0 ? raw.roleFile : 'LG-ROLE.md'
-  const base = typeof raw.baseDir === 'string' ? resolvePath(raw.baseDir) : process.cwd()
+  // SPEC "lg-role": `roleFile` (default LG-ROLE.md) is relative to the
+  // workspace. Resolving it against process.cwd() made Global pause forever
+  // whenever dsh happened to be launched from another directory.
+  const explicitBase = typeof raw.baseDir === 'string' ? raw.baseDir : undefined
+  const workspace = typeof raw.workspace === 'string' && raw.workspace.length > 0 ? raw.workspace : undefined
+  const base = resolvePath(explicitBase ?? workspace ?? process.cwd())
   return { roleFile: isAbsolute(file) ? file : resolvePath(base, file) }
 }
 
@@ -53,7 +60,8 @@ export const inject = ['systemPrompt']
  * @param raw - composition config.
  */
 export function apply(ctx: Context, raw: RawRoleConfig): void {
-  const config = resolveRoleConfig(raw)
+  const provided = (ctx as unknown as { get?: (name: string) => unknown }).get?.('lgWorkspace')
+  const config = resolveRoleConfig(provided === undefined ? raw : { ...raw, workspace: raw.workspace ?? provided })
   let text: string
   try {
     text = readFileSync(config.roleFile, 'utf8')
