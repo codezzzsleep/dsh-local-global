@@ -494,6 +494,18 @@ export class ChannelRuntime {
     })
   }
 
+  /**
+   * Read one attachment byte-exactly.
+   *
+   * PATCH attachments carry a `sha256` in their message, so the bytes matter
+   * and the utf8 path is not good enough (PA-1).
+   * @param path - path inside the channel repo, e.g. `attachments/0004/x.patch`.
+   * @returns the bytes, or `undefined` when the path is absent.
+   */
+  async readAttachment(path: string): Promise<Buffer | undefined> {
+    return await this.repo.readBytes(path)
+  }
+
   /** Every parsed message, ascending. */
   async all(): Promise<ParsedMessage[]> {
     const messages: ParsedMessage[] = []

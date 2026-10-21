@@ -5,7 +5,7 @@
  * writers never fight over checked-out files, and a rejected push costs one
  * refetch instead of a rebase.
  */
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -152,6 +152,24 @@ export class ChannelRepo {
    * @param path - repository-relative path.
    * @returns the blob contents, or `undefined` when absent.
    */
+  /**
+   * Read one path byte-exactly.
+   *
+   * `readFile` goes through a utf8 decode; an attachment's sha256 has to match
+   * the bytes on disk, so this one keeps them raw (SPEC "lg-patch-apply").
+   * @param path - path inside the repository.
+   * @returns the blob's bytes, or `undefined` when the path is absent.
+   */
+  async readBytes(path: string): Promise<Buffer | undefined> {
+    const result = spawnSync('git', ['show', `origin/${this.branch}:${path}`], {
+      cwd: this.dir,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '/bin/false' },
+      encoding: 'buffer',
+    })
+    if (result.status !== 0) return undefined
+    return result.stdout
+  }
+
   async readFile(path: string): Promise<string | undefined> {
     try {
       const { stdout } = await runGit(['show', `origin/${this.branch}:${path}`], { cwd: this.dir })

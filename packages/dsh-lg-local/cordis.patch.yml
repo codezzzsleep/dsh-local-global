@@ -6,3 +6,5 @@
 - insert:
     - id: lg-evidence
       name: '@local-global/dsh-lg-local/evidence'
+    - id: lg-patch-apply
+      name: '@local-global/dsh-lg-local/patch'

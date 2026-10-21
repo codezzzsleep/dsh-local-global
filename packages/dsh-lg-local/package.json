@@ -13,7 +13,11 @@
       "types": "./lib/evidence.d.ts",
       "default": "./lib/evidence.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./patch": {
+      "types": "./lib/patch.d.ts",
+      "default": "./lib/patch.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
