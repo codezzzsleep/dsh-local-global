@@ -273,15 +273,24 @@ export async function selfTest(ctx: Context, scope: ScopeConfig | undefined, con
  * default selection depends on which providers happen to be registered).
  * @param ctx - plugin context.
  * @param expected - the provider id to pin to.
+ * @param composesWeb - whether the preset exposes web tools; when it does, a missing service or pin fails closed.
  * @returns one probe result.
  */
-export function checkFetchProvider(ctx: unknown, expected: string): ProbeResult {
+export function checkFetchProvider(ctx: unknown, expected: string, composesWeb = true): ProbeResult {
   const name = 'web-fetch-provider'
   const web = serviceOf<{ config?: { fetchProvider?: { get?: () => string | undefined } }; fetchProviderEnv?: string }>(ctx, 'web')
-  if (web === undefined) return { name, pass: true, detail: 'no web service is composed; web_fetch is unavailable' }
+  if (web === undefined) {
+    return composesWeb
+      ? { name, pass: false, detail: 'the preset composes web tools but no web service is available to read the web_fetch provider pin' }
+      : { name, pass: true, detail: 'no web service is composed; web_fetch is unavailable' }
+  }
   // dsh-web `lib/index.js:115`: the selected id is `config.fetchProvider.get() ?? $DSH_WEB_FETCH_PROVIDER`.
   const read = web.config?.fetchProvider?.get
-  if (typeof read !== 'function') return { name, pass: true, detail: 'the web service does not expose its provider pin; not checked' }
+  if (typeof read !== 'function') {
+    return composesWeb
+      ? { name, pass: false, detail: 'the preset composes web tools but the web service does not expose its fetchProvider pin' }
+      : { name, pass: true, detail: 'the web service does not expose its provider pin; web tools are not composed' }
+  }
   let configured: string | undefined
   try {
     configured = read.call(web.config?.fetchProvider)
@@ -477,12 +486,16 @@ export class IntegrityRuntime {
       this.remember({ name: 'preset-registry', pass: false, detail: error instanceof Error ? error.message : String(error) })
     }
 
+    // Unknown until the preset scope is read: assume web tools are composed.
+    let composesWeb = true
     // The preset scope, not the process-level registry: that is what a session sees.
     try {
       const lease = await ctx.agentPresets.acquireScope(config.expectedPreset)
       try {
         const schemas = ctx.tools.schemas(lease.key as never)
-        this.remember(checkTools(schemas.map((schema) => schema.name), config.allowedTools))
+        const visible = schemas.map((schema) => schema.name)
+        composesWeb = visible.some((toolName) => toolName.startsWith('web_'))
+        this.remember(checkTools(visible, config.allowedTools))
       } finally {
         await (lease as unknown as { [Symbol.asyncDispose]?: () => Promise<void> })[Symbol.asyncDispose]?.()
       }
@@ -513,7 +526,7 @@ export class IntegrityRuntime {
 
     this.remember(await checkSentCopies(ctx, this.state))
     this.remember(await selfTest(ctx, scope, config))
-    this.remember(checkFetchProvider(ctx, config.fetchProvider))
+    this.remember(checkFetchProvider(ctx, config.fetchProvider, composesWeb))
   }
 
   /** Startup run: the registry publishes asynchronously, so the caller delays it. */

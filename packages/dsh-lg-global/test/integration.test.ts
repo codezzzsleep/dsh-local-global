@@ -353,6 +353,30 @@ describe('web_fetch provider pin (item 12)', () => {
   })
 })
 
+describe('web_fetch provider pin fails closed (web tools composed)', () => {
+  it('pauses while the web service or its pin is missing, passes once pinned', async () => {
+    const h = await boot()
+    h.tool('web_fetch')
+    await h.created()
+    let report = await h.call('lg_integrity_check')
+    expect(report.text).toMatch(/^PAUSED/)
+    expect(report.text).toContain('no web service')
+    const web: Obj = {}
+    h.ctx.provide('web', web)
+    report = await h.call('lg_integrity_check')
+    expect(report.text).toMatch(/^PAUSED/)
+    expect(report.text).toContain('does not expose its fetchProvider pin')
+    web['config'] = { fetchProvider: { get: () => 'http' } }
+    expect((await h.call('lg_integrity_check')).text).toMatch(/^PASS/)
+  })
+
+  it('does not require the web service when no web tool is composed', async () => {
+    const h = await boot()
+    await h.created()
+    expect((await h.call('lg_integrity_check')).text).toMatch(/^PASS/)
+  })
+})
+
 describe('repository checks are part of every run (item 6, 5)', () => {
   async function withRepo() {
     const h = await boot()

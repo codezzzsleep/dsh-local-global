@@ -95,6 +95,20 @@ describe('recordProbeOutcome (SPEC lg-repo / RP-6)', () => {
     expect(state.listWarnings().map((w) => w.code)).toEqual(['push-probe'])
   })
 
+  it('keeps a push-probe pause through an inconclusive run; only denied lifts it', async () => {
+    const { GuardState } = await import('../src/state.js')
+    const { recordProbeOutcome } = await import('../src/repo.js')
+    const state = new GuardState()
+    state.markVerified()
+    recordProbeOutcome(state, { verdict: 'writable', exitCode: 0, detail: 'ok' })
+    expect(state.paused).toBe(true)
+    expect(recordProbeOutcome(state, { verdict: 'inconclusive', exitCode: null, detail: 'timed out' })).toBe('warn')
+    expect(state.paused).toBe(true)
+    expect(state.list().map((r) => r.code)).toContain('push-probe')
+    expect(recordProbeOutcome(state, { verdict: 'denied', exitCode: null, detail: 'read only' })).toBe('pass')
+    expect(state.paused).toBe(false)
+  })
+
   it('clears a stale warning when a later run is denied', async () => {
     const { GuardState } = await import('../src/state.js')
     const { recordProbeOutcome } = await import('../src/repo.js')
