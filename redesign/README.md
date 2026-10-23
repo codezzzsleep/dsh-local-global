@@ -1,5 +1,7 @@
 # Local–Global（v0.2）：三个沙箱
 
+> **状态：未采纳的提案。** 项目的开发依据仍是 [`docs/spec.md`](../docs/spec.md)（SPEC v2），主线实现在 `packages/`。本提案取消了 SPEC 的两条不变量——Global 唯一的 STOP 权（不变量 5）和 Human 的 HALT（不变量 6），也不再以 dsh 插件交付；按 SPEC“已定决策”一节，这类改动只能由 Human 决定，在决定之前本目录只作参考，不在 CI 里跑，也不接受针对它的修复。已知问题见仓库根目录 README 的“redesign/”一节。
+
 ## 一句话
 
 Local 是一个完整的执行 agent，有自己的上下文和工具，**不依赖 Global 也能跑完任务**。Global 是独立的审阅者，有自己的上下文、记忆和工具，只通过消息和代码库了解 Local，给出建议，需要人决定时升级给人。
@@ -145,7 +147,7 @@ node bin/lg.js human log --config ./lab/roles/human.json
 5. **Global 没有实时唤醒。** 它靠 `lg global tick` 被调用，需要用 cron 或循环来驱动。
 6. **安全性仍是部署级的。** 服务是明文 HTTP，token 存在 JSON 文件里，比较用 Map 查找（不是恒定时间）。用于真实环境需要 TLS 和密钥管理。
 7. **代码库沙箱只有 smart HTTP。** 没有网页界面，没有 PR 或评审功能；评审在 Global 一侧完成。
-8. **旧设计已被替代。** `docs/` 和 `packages/` 是上一版的设计和通道实现，与当前代码不一致，是否删除需要你决定。
+8. **与主线的关系。** 本提案与 `docs/` 和 `packages/`（SPEC v2 主线）不一致。主线没有被替代，见文首的状态说明。
 
 ## 需要你决定的问题
 
