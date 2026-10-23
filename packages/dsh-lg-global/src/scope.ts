@@ -15,7 +15,7 @@
  * refuses everything, and the shared state stays paused with the reason.
  */
 import { lookup } from 'node:dns/promises'
-import { realpathSync, statSync } from 'node:fs'
+import { lstatSync, realpathSync, statSync } from 'node:fs'
 import { isIP } from 'node:net'
 import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -34,6 +34,8 @@ export interface PathRule {
   readonly write: boolean
   /** The tool normalises lexically before touching the disk, so check that spelling too. */
   readonly lexical?: boolean
+  /** Further arguments the tool reads as path globs; they must stay relative and inside the search root. */
+  readonly patterns?: readonly string[]
 }
 
 /**
@@ -46,8 +48,10 @@ export const PATH_RULES: Readonly<Record<string, PathRule>> = {
   read_image: { arg: 'file_path', required: true, write: false },
   write: { arg: 'file_path', required: true, write: true },
   edit: { arg: 'file_path', required: true, write: true },
-  glob: { arg: 'path', required: false, write: false },
-  grep: { arg: 'path', required: false, write: false },
+  // The search tools' own argument names are not installed here; list every plausible glob-bearing one.
+  // grep's `pattern` is a regular expression, not a path, so it is not listed.
+  glob: { arg: 'path', required: false, write: false, patterns: ['pattern', 'glob', 'include', 'exclude'] },
+  grep: { arg: 'path', required: false, write: false, patterns: ['glob', 'include', 'exclude'] },
   working_directory: { arg: 'cd', required: false, write: false },
   // CH-12 evidence export: `dsh-lg-common` writes `out` with a lexical resolve.
   lg_evidence_session: { arg: 'out', required: true, write: true, lexical: true },
@@ -154,8 +158,35 @@ function deniedPrefix(tool: string): string | undefined {
 
 const DOT_DOT = /(?:^|[\\/])\.\.(?:[\\/]|$)/u
 
+/** A glob that is absolute, starts at `~`, or has a `..` segment (also inside `{a,..}`), after an optional `!`. */
+const GLOB_ESCAPE = /^!?(?:[\\/]|[A-Za-z]:|~)|[{,][\\/~]|(?:^|[\\/{,])\.\.(?:$|[\\/},])/u
+
+/** Refuse a glob-bearing argument that could reach outside the search root. */
+export function checkGlobArgument(tool: string, key: string, value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  const values = Array.isArray(value) ? value : [value]
+  for (const entry of values) {
+    if (typeof entry !== 'string') return `lg-scope: ${tool}: "${key}" must be a string or a list of strings`
+    if (entry.includes('\0') || GLOB_ESCAPE.test(entry.trim())) {
+      return `lg-scope: ${tool}: "${key}" must be a relative pattern inside the search root (no absolute path, "~" or ".."): ${entry}`
+    }
+  }
+  return undefined
+}
+
 function errorCode(error: unknown): string | undefined {
   return typeof error === 'object' && error !== null ? (error as { code?: string }).code : undefined
+}
+
+/** A missing path component that is itself a symlink is dangling: a write through it lands wherever it points. */
+function refuseDanglingLink(path: string): void {
+  try {
+    if (!lstatSync(path).isSymbolicLink()) return
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT' || errorCode(error) === 'ENOTDIR') return
+    throw error
+  }
+  throw new Error(`dangling symlink: ${path}`)
 }
 
 /**
@@ -164,7 +195,8 @@ function errorCode(error: unknown): string | undefined {
  * contains `..` keeps its spelling so the kernel walks symlinks physically
  * (`link/..` is the *target's* parent); otherwise it is normalised. The longest
  * existing prefix is then realpath'd and the missing tail appended, however
- * deep it is.
+ * deep it is. A missing component that is a (dangling) symlink is refused: its
+ * target is unknown to this check but not to the tool.
  * @param cwd - absolute base for a relative `path`.
  * @param path - the model's argument.
  * @returns the physical path the tool will touch.
@@ -181,6 +213,7 @@ export function resolveToolPath(cwd: string, path: string): string {
   } catch (error) {
     if (errorCode(error) !== 'ENOENT') throw error
   }
+  refuseDanglingLink(display)
   const missing = [basename(display)]
   let ancestor = dirname(display)
   for (;;) {
@@ -191,6 +224,7 @@ export function resolveToolPath(cwd: string, path: string): string {
     } catch (error) {
       if (errorCode(error) !== 'ENOENT') throw error
     }
+    refuseDanglingLink(ancestor)
     const parent = dirname(ancestor)
     if (parent === ancestor) return display
     missing.unshift(basename(ancestor))
@@ -390,15 +424,19 @@ export function checkPath(
   } catch (error) {
     return `lg-scope: ${tool} path cannot be resolved (${error instanceof Error ? error.message : String(error)}): ${target}`
   }
-  const workspaceReal = realpathInside(config.workspace)
-  for (const absolute of absolutes) {
-    if (!lexicallyInside(workspaceReal, absolute)) return `lg-scope: ${tool} path escapes the Global workspace: ${target}`
-    if (!write) continue
-    for (const guarded of [config.roleFile, ...extra]) {
-      if (lexicallyInside(realpathInside(guarded), absolute)) return `lg-scope: ${tool} may not write the protected path ${guarded}: ${target}`
+  try {
+    const workspaceReal = realpathInside(config.workspace)
+    for (const absolute of absolutes) {
+      if (!lexicallyInside(workspaceReal, absolute)) return `lg-scope: ${tool} path escapes the Global workspace: ${target}`
+      if (!write) continue
+      for (const guarded of [config.roleFile, ...extra]) {
+        if (lexicallyInside(realpathInside(guarded), absolute)) return `lg-scope: ${tool} may not write the protected path ${guarded}: ${target}`
+      }
+      const allowed = config.writeRoots.some((root) => lexicallyInside(realpathInside(root), absolute))
+      if (!allowed) return `lg-scope: ${tool} may only write inside ${config.writeRoots.join(', ')}: ${target}`
     }
-    const allowed = config.writeRoots.some((root) => lexicallyInside(realpathInside(root), absolute))
-    if (!allowed) return `lg-scope: ${tool} may only write inside ${config.writeRoots.join(', ')}: ${target}`
+  } catch (error) {
+    return `lg-scope: ${tool} scope root cannot be resolved (${error instanceof Error ? error.message : String(error)}): ${target}`
   }
   return undefined
 }
@@ -564,6 +602,10 @@ export function createScopeRuntime(deps: ScopeRuntimeDeps): ScopeRuntime {
       if (value !== undefined && typeof value !== 'string') return `lg-scope: ${toolName}: "${rule.arg}" must be a string`
       if (value === undefined && rule.required) return `lg-scope: ${toolName} without a ${rule.arg}`
       if (value === '') return `lg-scope: ${toolName}: "${rule.arg}" is empty`
+      for (const key of rule.patterns ?? []) {
+        const refused = checkGlobArgument(toolName, key, args?.[key])
+        if (refused !== undefined) return refused
+      }
       const cwds = deps.cwds(exec.agent)
       const bases: string[] = []
       if (rule.lexical === true) {
