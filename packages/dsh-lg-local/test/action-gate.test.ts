@@ -1,10 +1,10 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { actionFingerprint } from '@local-global/lg-protocol'
 
-import { apply, gateReason, matchRule, matchRules, resolveActionGateConfig } from '../src/action-gate.js'
-import { LEDGER_FILE } from '../src/ledger.js'
+import { NESTING_RULE, apply, gateReason, matchRule, matchRules, resolveActionGateConfig } from '../src/action-gate.js'
+import { ApprovalLedger, LEDGER_FILE, LedgerError, ledgerKey } from '../src/ledger.js'
 import { fakeCtx, tmp } from './fake-ctx.js'
 
 const config = resolveActionGateConfig({})
@@ -213,5 +213,43 @@ describe('AG-1 / AG-2: an approval is spent once, durably', () => {
     const service = fake.services.get('lgActionGate') as { authorize(tool: string, args: unknown): string | undefined }
     expect(service.authorize('bash', { command })).toBeUndefined()
     expect(service.authorize('bash', { command })).toContain('C-class')
+  })
+})
+
+describe('fail closed on what the parser cannot see', () => {
+  it('asks for an approval when sh -c nesting is deeper than the parser follows', () => {
+    let command = 'git push -f origin main'
+    for (let level = 0; level < 7; level += 1) command = `sh -c ${JSON.stringify(command)}`
+    const ids = matchRules(config, 'bash', { command }).map((match) => match.rule.id)
+    expect(ids).toContain(NESTING_RULE.id)
+    expect(matchRules(config, 'bash', { command: 'sh -c "echo hi"' })).toEqual([])
+  })
+})
+
+describe('approval ledger', () => {
+  it('never writes a credential from the repo URL into the ledger file', () => {
+    const dir = tmp('ledger-key')
+    new ApprovalLedger(dir, 'https://x-access-token:ghp_secretsecretsecret@github.com/o/c.git').spend([
+      { decision: '0042', fingerprint: 'f', consumedAt: '2026-10-23T00:00:00Z' },
+    ])
+    const text = readFileSync(join(dir, LEDGER_FILE), 'utf8')
+    expect(text).not.toContain('ghp_')
+    expect(text).toContain('https://github.com/o/c.git')
+    expect(ledgerKey('git@github.com:o/c.git')).toBe('git@github.com:o/c.git')
+  })
+
+  it('refuses to spend while another process holds the lock, and breaks a stale lock', () => {
+    const dir = tmp('ledger-lock')
+    const ledger = new ApprovalLedger(dir, 'file:///c.git')
+    const lock = join(dir, `${LEDGER_FILE}.lock`)
+    writeFileSync(lock, '')
+    const entry = { decision: '0042', fingerprint: 'f', consumedAt: '2026-10-23T00:00:00Z' }
+    expect(() => ledger.spend([entry])).toThrow(LedgerError)
+    expect(ledger.list()).toEqual([])
+    const old = new Date(Date.now() - 60_000)
+    utimesSync(lock, old, old)
+    ledger.spend([entry])
+    expect(ledger.list().map((spent) => spent.decision)).toEqual(['0042'])
+    expect(existsSync(lock)).toBe(false)
   })
 })
