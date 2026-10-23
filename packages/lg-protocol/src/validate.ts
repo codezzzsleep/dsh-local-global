@@ -1,13 +1,14 @@
 /**
  * Semantic validation of one parsed message (docs/channel-git.md §4).
  */
+import { attachmentNameProblem } from './attachments.js'
 import {
   ID_PREFIX,
   ID_RE,
   ALLOWED_SENDERS,
   MESSAGE_TYPES,
   REQUIRED_FIELDS,
-  isLegacySeq,
+  isLegacyMessage,
   type MessageError,
   type MessageType,
   type ParsedMessage,
@@ -50,12 +51,14 @@ function seqList(value: unknown): string[] | undefined {
 /**
  * Validate one parsed message against the sender, field, and shape rules of §4.
  *
- * Messages at or below {@link isLegacySeq} are exempt (§10).
+ * Only the two archived pre-contract messages ({@link isLegacyMessage}) are
+ * exempt (§10); everything else, including other sequences at 0001–0002, is
+ * checked.
  * @param message - the parsed message.
  * @returns every rule violation; empty means valid.
  */
 export function validateMessage(message: ParsedMessage): MessageError[] {
-  if (isLegacySeq(message.seq)) return []
+  if (isLegacyMessage(message)) return []
 
   const errors: MessageError[] = []
   const { type, sender, fields } = message
@@ -134,6 +137,15 @@ export function validateMessage(message: ParsedMessage): MessageError[] {
           'a list of "<review sequence>/F-<n>" strings',
         )
       }
+      if (Object.prototype.hasOwnProperty.call(fields, 'checkpoint')) {
+        check(typeof fields['checkpoint'] === 'boolean', 'checkpoint', 'a boolean')
+      }
+      if (Object.prototype.hasOwnProperty.call(fields, 'meanwhile')) {
+        check(isStringArray(fields['meanwhile']), 'meanwhile', 'a list of strings')
+      }
+      if (Object.prototype.hasOwnProperty.call(fields, 'open_questions')) {
+        check(isStringArray(fields['open_questions']), 'open_questions', 'a list of strings')
+      }
       break
     }
     case 'QUESTION': {
@@ -178,7 +190,8 @@ export function validateMessage(message: ParsedMessage): MessageError[] {
       break
     }
     case 'PATCH': {
-      check(typeof fields['name'] === 'string', 'name', 'a string')
+      const patchName = attachmentNameProblem(fields['name'])
+      check(patchName === undefined, 'name', `a plain attachment file name (${patchName ?? ''})`)
       check(SEQ_RE.test(String(fields['claim'] ?? '')), 'claim', 'a four-digit sequence string')
       check(SHA40_RE.test(String(fields['base'] ?? '')), 'base', 'a full 40-character SHA')
       check(fields['format'] === 'git-format-patch', 'format', '"git-format-patch"')
@@ -225,12 +238,16 @@ export function validateMessage(message: ParsedMessage): MessageError[] {
       const probes = fields['probes']
       check(Array.isArray(probes), 'probes', 'a list of {name, expected, actual, pass}')
       if (Array.isArray(probes)) {
-        for (const item of probes) {
-          if (!isRecord(item) || typeof item['name'] !== 'string' || typeof item['pass'] !== 'boolean') {
-            check(false, 'probes[]', 'a list of {name, expected, actual, pass}')
-            break
-          }
-        }
+        probes.forEach((item, index) => {
+          const good =
+            isRecord(item) &&
+            typeof item['name'] === 'string' &&
+            item['name'].length > 0 &&
+            typeof item['expected'] === 'string' &&
+            typeof item['actual'] === 'string' &&
+            typeof item['pass'] === 'boolean'
+          check(good, `probes[${String(index)}]`, '{name: string, expected: string, actual: string, pass: boolean}')
+        })
       }
       break
     }
