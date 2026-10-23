@@ -6,11 +6,27 @@
  * `apply()` only stops the integrity plugin itself from loading.
  */
 
+/** One integrity probe outcome; shared so lg-repo and lg-integrity report alike. */
+export interface ProbeResult {
+  readonly name: string
+  readonly pass: boolean
+  readonly detail: string
+}
+
 /** One reason Global is paused. */
 export interface PauseReason {
   readonly code: string
   readonly detail: string
   readonly at: string
+}
+
+/** The session id of an agent (`agent.id`, which dsh keeps equal to `session.id`), when it has one. */
+function agentId(agent: unknown): string | undefined {
+  const record = agent as { id?: unknown; session?: { id?: unknown } } | null | undefined
+  for (const candidate of [record?.id, record?.session?.id]) {
+    if (typeof candidate === 'string' && candidate.length > 0) return candidate
+  }
+  return undefined
 }
 
 /** Process-wide pause state shared by every lg-global plugin. */
@@ -20,6 +36,10 @@ export class GuardState {
     { code: 'not-verified', detail: 'integrity has not reported a clean composition yet', at: new Date(0).toISOString() },
   ]
   private warnings: PauseReason[] = []
+  private readonly readyObjects = new WeakSet<object>()
+  private readonly readyIds = new Set<string>()
+  private readonly components = new Map<string, unknown>()
+  private readonly protectedPaths = new Set<string>()
 
   /** Record a failure; repeated codes replace their previous detail. */
   pause(code: string, detail: string): void {
@@ -76,6 +96,49 @@ export class GuardState {
   /** Snapshot of warnings, newest state per code. */
   listWarnings(): readonly PauseReason[] {
     return [...this.warnings]
+  }
+
+  /**
+   * Mark one agent as having completed its own integrity run. Keyed by the
+   * session id when the agent has one, so a wrapper around the same agent
+   * still counts; otherwise by object identity.
+   */
+  markAgentReady(agent: unknown): void {
+    const id = agentId(agent)
+    if (id !== undefined) this.readyIds.add(id)
+    else if (typeof agent === 'object' && agent !== null) this.readyObjects.add(agent)
+  }
+
+  /** Whether the agent's integrity run completed cleanly; unknown agents are not ready. */
+  isAgentReady(agent: unknown): boolean {
+    const id = agentId(agent)
+    if (id !== undefined) return this.readyIds.has(id)
+    return typeof agent === 'object' && agent !== null && this.readyObjects.has(agent)
+  }
+
+  /** Publish one plugin's effective (non-secret) configuration or runtime handle. */
+  setComponent(name: string, value: unknown): void {
+    this.components.set(name, value)
+  }
+
+  /** Read what {@link setComponent} stored. */
+  component<T>(name: string): T | undefined {
+    return this.components.get(name) as T | undefined
+  }
+
+  /** Every published component, for the effective-configuration hash. */
+  componentEntries(): [string, unknown][] {
+    return [...this.components.entries()]
+  }
+
+  /** Paths no write-capable tool may touch, whatever the write roots say. */
+  protect(path: string): void {
+    this.protectedPaths.add(path)
+  }
+
+  /** Snapshot of {@link protect}ed paths. */
+  protectedList(): readonly string[] {
+    return [...this.protectedPaths]
   }
 
   /** Human-readable denial reason. */
