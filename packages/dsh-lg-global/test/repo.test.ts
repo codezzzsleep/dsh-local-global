@@ -49,8 +49,13 @@ describe('probePushDenied', () => {
     const dir = mkdtempSync(join(tmpdir(), 'lg-probe-writable-'))
     const bare = join(dir, 'bare.git')
     await runGit(['init', '--bare', '--initial-branch', 'main', bare])
-    const probe = await probePushDenied({ remote: bare, branch: 'main', mirrorDir: join(dir, 'ignored.git') })
+    const config = { remote: bare, branch: 'main', mirrorDir: join(dir, 'ignored.git') }
+    // The file transport is default-deny; this control opts in explicitly.
+    const probe = await probePushDenied(config, { allowFile: true })
     expect(probe.verdict).toBe('writable')
+    // Without the opt-in the same remote is refused by git, never "writable".
+    const refused = await probePushDenied(config)
+    expect(refused.verdict).toBe('inconclusive')
   })
 
   it('reports denied or inconclusive against an anonymous https remote, never writable', async () => {

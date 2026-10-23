@@ -54,31 +54,49 @@ export const name = 'lg-role'
 /** Services this plugin reads. */
 export const inject = ['systemPrompt']
 
+/** Read the role file; pauses and throws when it is unreadable or empty (RL-2). */
+function readRole(file: string): string {
+  let text: string
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch (error) {
+    const detail = `cannot read ${file}: ${error instanceof Error ? error.message : String(error)}`
+    lgState.pause('role-file', detail)
+    throw new Error(`lg-role: ${detail}`)
+  }
+  if (text.trim().length === 0) {
+    lgState.pause('role-file', `${file} is empty`)
+    throw new Error(`lg-role: ${file} is empty`)
+  }
+  return text
+}
+
 /**
- * Read the role file once and contribute it as a system-prompt section.
+ * Contribute the role file as a system-prompt section.
+ *
+ * The section reads the file at each assembly, so a role file that was
+ * unreadable at mount time can never leave an unpaused session without its
+ * instructions: the pause that integrity lifts after a re-check and the prompt
+ * that Global runs under always agree.
  * @param ctx - plugin context.
  * @param raw - composition config.
  */
 export function apply(ctx: Context, raw: RawRoleConfig): void {
   const provided = (ctx as unknown as { get?: (name: string) => unknown }).get?.('lgWorkspace')
   const config = resolveRoleConfig(provided === undefined ? raw : { ...raw, workspace: raw.workspace ?? provided })
+  // lg-integrity cross-checks this against lg-scope's own role file path.
+  lgState.setComponent('role', { roleFile: config.roleFile })
 
-  let text: string
   try {
-    text = readFileSync(config.roleFile, 'utf8')
-  } catch (error) {
-    lgState.pause('role-file', `cannot read ${config.roleFile}: ${error instanceof Error ? error.message : String(error)}`)
-    return
-  }
-  if (text.trim().length === 0) {
-    lgState.pause('role-file', `${config.roleFile} is empty`)
-    return
+    readRole(config.roleFile)
+  } catch {
+    // Paused above; the section below keeps refusing until the file is readable.
   }
   ctx.effect(() =>
     ctx.systemPrompt.section({
       name: ROLE_SECTION,
       order: ROLE_ORDER,
-      text,
+      text: () => readRole(config.roleFile),
     }),
   )
 }
