@@ -49,8 +49,8 @@ async function runtime(): Promise<ChannelRuntime> {
 describe('ChannelRuntime.recordRelayed', () => {
   it('archives a message whose fields it cannot validate, and lets readers mark it INVALID', async () => {
     const channel = await runtime()
-    // Sequences at or below 0002 are exempt from field validation, so seed two
-    // messages first to make the relayed one land at 0003.
+    // Seed two messages so the relayed one lands at 0003, past the legacy
+    // range: only 0001-human-TASK and 0002-local-REPORT are exempt from validation.
     await channel.post({ type: 'CLAIM', fields: { scope: [], implementer: 'local' } })
     await channel.postAs('human', { type: 'HALT', fields: { reason: 'seed' } })
 
