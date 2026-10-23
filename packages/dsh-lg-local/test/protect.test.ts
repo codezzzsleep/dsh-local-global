@@ -26,6 +26,14 @@ describe('PT-1: path resolution is physical and uses the current directory', () 
     expect(protectReason(config, 'bash', { command: 'cat link/workspace/LG-ROLE.md' }, project)).toContain('protected path')
   })
 
+  it('follows a dangling symlink to where a write would land', () => {
+    const { project, secret, config } = layout()
+    symlinkSync(join(secret, 'workspace', 'planted.md'), join(project, 'dangling'))
+    expect(protectReason(config, 'write', { file_path: 'dangling' }, project)).toContain('protected path')
+    symlinkSync(join(project, 'nowhere'), join(project, 'harmless'))
+    expect(protectReason(config, 'write', { file_path: 'harmless' }, project)).toBeUndefined()
+  })
+
   it('normalises a/../b before judging', () => {
     const { project, secret, config } = layout()
     expect(protectReason(config, 'read', { file_path: join(project, 'x', '..', '..', 'global-home', 'workspace', 'LG-ROLE.md') }, project)).toContain('protected path')
