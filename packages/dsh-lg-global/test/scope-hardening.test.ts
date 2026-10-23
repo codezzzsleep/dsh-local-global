@@ -147,6 +147,26 @@ describe('path resolution matches how dsh-fs-local resolves (item 4)', () => {
   })
 })
 
+describe('a dangling symlink cannot launder a write path', () => {
+  it('refuses a symlink in a write root whose target does not exist yet', () => {
+    symlinkSync(join(outside, 'newfile.txt'), join(workspace, 'drafts', 'dangling'))
+    symlinkSync(join(outside, 'newdir'), join(workspace, 'drafts', 'dangling-dir'))
+    expect(() => resolveToolPath(workspace, 'drafts/dangling')).toThrow(/dangling symlink/)
+    expect(checkPath(config, 'write', 'drafts/dangling', workspace)).toContain('cannot be resolved')
+    expect(checkPath(config, 'edit', `${workspace}/drafts/dangling`, workspace)).toContain('cannot be resolved')
+    expect(checkPath(config, 'write', 'drafts/dangling-dir/deep/new.txt', workspace)).toContain('cannot be resolved')
+    expect(isInside(workspace, 'drafts/dangling')).toBe(false)
+  })
+
+  it('is refused by the call-time guard, while a normal new file in drafts is still allowed', () => {
+    symlinkSync(join(outside, 'guarded.txt'), join(workspace, 'drafts', 'dangling-guarded'))
+    const { call } = guardFor({ current: workspace })
+    expect(call('write', { file_path: 'drafts/dangling-guarded', content: 'x' })).toContain('cannot be resolved')
+    expect(call('write', { file_path: 'drafts/brand-new.md', content: 'x' })).toBeUndefined()
+    expect(call('write', { file_path: 'drafts/new-dir/brand-new.md', content: 'x' })).toBeUndefined()
+  })
+})
+
 describe('relative paths follow the current working directory (item 4c)', () => {
   it('resolves LG-ROLE.md against the cwd the tool will use, not the creation cwd', () => {
     // Session was created in drafts/, then `working_directory cd` moved it to the workspace.
