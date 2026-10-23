@@ -6,6 +6,13 @@
  * `apply()` only stops the integrity plugin itself from loading.
  */
 
+/** One integrity probe outcome; shared so lg-repo and lg-integrity report alike. */
+export interface ProbeResult {
+  readonly name: string
+  readonly pass: boolean
+  readonly detail: string
+}
+
 /** One reason Global is paused. */
 export interface PauseReason {
   readonly code: string
@@ -20,6 +27,9 @@ export class GuardState {
     { code: 'not-verified', detail: 'integrity has not reported a clean composition yet', at: new Date(0).toISOString() },
   ]
   private warnings: PauseReason[] = []
+  private readonly ready = new WeakSet<object>()
+  private readonly components = new Map<string, unknown>()
+  private readonly protectedPaths = new Set<string>()
 
   /** Record a failure; repeated codes replace their previous detail. */
   pause(code: string, detail: string): void {
@@ -76,6 +86,41 @@ export class GuardState {
   /** Snapshot of warnings, newest state per code. */
   listWarnings(): readonly PauseReason[] {
     return [...this.warnings]
+  }
+
+  /** Mark one agent as having completed its own integrity run. */
+  markAgentReady(agent: unknown): void {
+    if (typeof agent === 'object' && agent !== null) this.ready.add(agent)
+  }
+
+  /** Whether the agent's integrity run completed cleanly; unknown agents are not ready. */
+  isAgentReady(agent: unknown): boolean {
+    return typeof agent === 'object' && agent !== null && this.ready.has(agent)
+  }
+
+  /** Publish one plugin's effective (non-secret) configuration or runtime handle. */
+  setComponent(name: string, value: unknown): void {
+    this.components.set(name, value)
+  }
+
+  /** Read what {@link setComponent} stored. */
+  component<T>(name: string): T | undefined {
+    return this.components.get(name) as T | undefined
+  }
+
+  /** Every published component, for the effective-configuration hash. */
+  componentEntries(): [string, unknown][] {
+    return [...this.components.entries()]
+  }
+
+  /** Paths no write-capable tool may touch, whatever the write roots say. */
+  protect(path: string): void {
+    this.protectedPaths.add(path)
+  }
+
+  /** Snapshot of {@link protect}ed paths. */
+  protectedList(): readonly string[] {
+    return [...this.protectedPaths]
   }
 
   /** Human-readable denial reason. */
