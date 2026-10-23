@@ -19,6 +19,7 @@ export {
   ID_RE,
   SENDERS,
   deliveryLabel,
+  isLegacyMessage,
   isLegacySeq,
   type Finding,
   type FindingSeverity,
@@ -32,8 +33,19 @@ export {
 
 export { parseFilename, parseMessage, type FilenameParts } from './parse.js'
 export { checkIdentities, validateMessage } from './validate.js'
-export { formatMessage } from './format.js'
+export { formatMessage, formatParsed } from './format.js'
 export { FILENAME_RE, type FormattedMessage, type FormatInput } from './format-types.js'
 export { findSeqAnomalies, nextSeq } from './seq.js'
 export { foldState, type Approval, type ChannelState, type OpenFinding } from './fold.js'
+export {
+  analyzeChannel,
+  foldChannel,
+  supersededByOf,
+  type ChannelAnalysis,
+  type ChannelView,
+  type IgnoredReference,
+} from './effective.js'
+export { ATTACHMENTS_DIR, attachmentNameProblem, attachmentPath } from './attachments.js'
+export { formatId, highestIdCounter, nextId } from './ids.js'
+export { isHumanHalt } from './halt.js'
 export { actionFingerprint } from './fingerprint.js'
