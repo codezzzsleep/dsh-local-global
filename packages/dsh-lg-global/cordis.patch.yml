@@ -18,6 +18,8 @@
           # agent-instructions is deliberately absent: it would load files Local
           # can write ($DSH_AGENTS_HOME/AGENTS.md, directory walks after
           # read/write/edit, AGENTS.local.md). lg-role reads one role file only.
+          # Must name the same file as lg-scope's `roleFile` (default LG-ROLE.md):
+          # lg-scope forbids every write to it, lg-integrity checks both agree.
           - id: lg-role
             name: '@local-global/dsh-lg-global/role'
             config:
@@ -43,6 +45,18 @@
           # One implementation, shared with dsh-lg-local via dsh-lg-common.
           - id: lg-evidence
             name: '@local-global/dsh-lg-common/evidence'
+
+# web_fetch must go through the provider that resolves and validates every
+# destination, pins the connection to the validated addresses, and refuses
+# cross-origin redirects (dsh-web-fetch-http, id `http`). Without a pin dsh
+# picks whichever fetch provider happens to be registered. A patch replaces a
+# row's whole config, so the dsh-base defaults for `searchProvider` are
+# restated; lg-integrity pauses Global if a later layer pins anything else.
+- id: web
+  name: '@deepseek-ai/dsh-web'
+  config:
+    searchProvider: deepseek-official
+    fetchProvider: http
 
 - id: agent-preset-registry
   name: '@deepseek-ai/dsh-agent-preset-registry'
