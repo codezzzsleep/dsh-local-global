@@ -15,7 +15,7 @@
  * refuses everything, and the shared state stays paused with the reason.
  */
 import { lookup } from 'node:dns/promises'
-import { realpathSync, statSync } from 'node:fs'
+import { lstatSync, realpathSync, statSync } from 'node:fs'
 import { isIP } from 'node:net'
 import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -158,13 +158,25 @@ function errorCode(error: unknown): string | undefined {
   return typeof error === 'object' && error !== null ? (error as { code?: string }).code : undefined
 }
 
+/** A missing path component that is itself a symlink is dangling: a write through it lands wherever it points. */
+function refuseDanglingLink(path: string): void {
+  try {
+    if (!lstatSync(path).isSymbolicLink()) return
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT' || errorCode(error) === 'ENOTDIR') return
+    throw error
+  }
+  throw new Error(`dangling symlink: ${path}`)
+}
+
 /**
  * Resolve a path exactly as `dsh-fs-local` does for the tools
  * (`resolveLocalTarget`, dsh-fs-local `lib/index.js:154-212`): a path that
  * contains `..` keeps its spelling so the kernel walks symlinks physically
  * (`link/..` is the *target's* parent); otherwise it is normalised. The longest
  * existing prefix is then realpath'd and the missing tail appended, however
- * deep it is.
+ * deep it is. A missing component that is a (dangling) symlink is refused: its
+ * target is unknown to this check but not to the tool.
  * @param cwd - absolute base for a relative `path`.
  * @param path - the model's argument.
  * @returns the physical path the tool will touch.
@@ -181,6 +193,7 @@ export function resolveToolPath(cwd: string, path: string): string {
   } catch (error) {
     if (errorCode(error) !== 'ENOENT') throw error
   }
+  refuseDanglingLink(display)
   const missing = [basename(display)]
   let ancestor = dirname(display)
   for (;;) {
@@ -191,6 +204,7 @@ export function resolveToolPath(cwd: string, path: string): string {
     } catch (error) {
       if (errorCode(error) !== 'ENOENT') throw error
     }
+    refuseDanglingLink(ancestor)
     const parent = dirname(ancestor)
     if (parent === ancestor) return display
     missing.unshift(basename(ancestor))
