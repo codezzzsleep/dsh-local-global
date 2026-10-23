@@ -29,3 +29,23 @@ describe('pause lifecycle (PS-2)', () => {
     expect(state.denial()).toContain('not allowed: bash')
   })
 })
+
+describe('checkFetchProvider fails closed when web tools are composed', () => {
+  const ctxWith = (web: unknown) => ({ get: (name: string) => (name === 'web' ? web : undefined) })
+
+  it('refuses a missing web service or an unreadable pin', async () => {
+    const { checkFetchProvider } = await import('../src/integrity.js')
+    expect(checkFetchProvider(ctxWith(undefined), 'http')).toMatchObject({ pass: false, detail: expect.stringContaining('no web service') })
+    expect(checkFetchProvider(ctxWith({}), 'http', true)).toMatchObject({ pass: false, detail: expect.stringContaining('does not expose') })
+    expect(checkFetchProvider(ctxWith({ config: {} }), 'http', true).pass).toBe(false)
+  })
+
+  it('stays quiet only when no web tool is composed, and still checks a readable pin', async () => {
+    const { checkFetchProvider } = await import('../src/integrity.js')
+    expect(checkFetchProvider(ctxWith(undefined), 'http', false).pass).toBe(true)
+    expect(checkFetchProvider(ctxWith({}), 'http', false).pass).toBe(true)
+    const web = (pin: string) => ({ config: { fetchProvider: { get: () => pin } } })
+    expect(checkFetchProvider(ctxWith(web('http')), 'http', true).pass).toBe(true)
+    expect(checkFetchProvider(ctxWith(web('other')), 'http', false).pass).toBe(false)
+  })
+})
