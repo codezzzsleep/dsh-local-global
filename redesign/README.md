@@ -1,5 +1,7 @@
 # Local–Global（v0.2）：三个沙箱
 
+> **状态：未采纳的提案。** 项目的开发依据仍是 [`docs/spec.md`](../docs/spec.md)（SPEC v2），主线实现在 `packages/`。本提案取消了 SPEC 的两条不变量——Global 唯一的 STOP 权（不变量 5）和 Human 的 HALT（不变量 6），也不再以 dsh 插件交付；按 SPEC“已定决策”一节，这类改动只能由 Human 决定，在决定之前本目录只作参考，不在 CI 里跑，也不接受针对它的修复。已知问题见仓库根目录 README 的“redesign/”一节。
+
 ## 一句话
 
 Local 是一个完整的执行 agent，有自己的上下文和工具，**不依赖 Global 也能跑完任务**。Global 是独立的审阅者，有自己的上下文、记忆和工具，只通过消息和代码库了解 Local，给出建议，需要人决定时升级给人。
