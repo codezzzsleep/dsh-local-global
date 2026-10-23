@@ -2,7 +2,7 @@
  * Helpers shared by the Local plugins: service lookup, the session's current
  * directory, and physical path resolution.
  */
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, lstatSync, readlinkSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path'
 
@@ -62,11 +62,14 @@ export function expandTilde(path: string): string {
  * @param base - directory for relative paths.
  * @returns the physical absolute path.
  */
-export function physicalPath(path: string, base: string = process.cwd()): string {
+export function physicalPath(path: string, base: string = process.cwd(), hops = 0): string {
   const absolute = resolvePath(base, expandTilde(path))
   let head = absolute
   const tail: string[] = []
   while (!existsSync(head)) {
+    // A dangling symlink: a write through it lands at its target.
+    const link = danglingTarget(head)
+    if (link !== undefined && hops < 40) return physicalPath(resolvePath(link, ...tail), '/', hops + 1)
     const parent = dirname(head)
     if (parent === head) return absolute
     tail.unshift(head.slice(parent.length).replace(/^\/+/, ''))
@@ -76,6 +79,16 @@ export function physicalPath(path: string, base: string = process.cwd()): string
     return resolvePath(realpathSync.native(head), ...tail)
   } catch {
     return absolute
+  }
+}
+
+/** The absolute target of `path` when it is a symlink whose target does not exist. */
+function danglingTarget(path: string): string | undefined {
+  try {
+    if (!lstatSync(path).isSymbolicLink()) return undefined
+    return resolvePath(dirname(path), readlinkSync(path))
+  } catch {
+    return undefined
   }
 }
 
