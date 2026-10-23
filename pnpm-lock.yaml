@@ -73,6 +73,9 @@ importers:
 
   packages/dsh-lg-local:
     dependencies:
+      '@local-global/dsh-lg-common':
+        specifier: workspace:*
+        version: link:../dsh-lg-common
       '@local-global/lg-protocol':
         specifier: workspace:*
         version: link:../lg-protocol

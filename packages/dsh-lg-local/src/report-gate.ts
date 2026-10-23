@@ -21,7 +21,7 @@
  */
 import { execFileSync } from 'node:child_process'
 
-import { foldState } from '@local-global/lg-protocol'
+import { foldChannel, type ParsedMessage } from '@local-global/lg-protocol'
 import type { Context } from '@deepseek-ai/cordis'
 // Module augmentation only: `ctx.tools` is declared in dsh-tools.
 import type {} from '@deepseek-ai/dsh-tools'
@@ -97,7 +97,7 @@ export function claimsCompletion(text: string | undefined): boolean {
 
 /** The slice of the channel runtime the gate reads. */
 interface ChannelFacts {
-  all?: () => Promise<readonly { seq: string; sender?: string; type: string; fields: Readonly<Record<string, unknown>> }[]>
+  all?: () => Promise<readonly ParsedMessage[]>
 }
 
 /** What `collectFacts` takes besides the channel and HEAD. */
@@ -110,12 +110,15 @@ export interface FactsExtra {
 
 /** Fold the channel messages into the facts the gate judges. */
 export async function collectFacts(channel: ChannelFacts, head: string, extra: FactsExtra = {}): Promise<GateFacts> {
-  const messages = (await channel.all?.()) ?? []
+  // The channel is untrusted input: only valid messages count as a report, a
+  // directive or a finding, so a malformed or misattributed REPORT cannot
+  // satisfy the gate (PR-2, PR-6).
+  const view = foldChannel((await channel.all?.()) ?? [])
   const reportedCommits: string[] = []
   const reportedDirectiveVersions: number[] = []
   const reportedApprovals = new Set<string>()
   let directiveVersion: number | undefined
-  for (const message of messages) {
+  for (const message of view.analysis.effective) {
     if (message.type === 'REPORT') {
       const commit = message.fields['commit']
       if (typeof commit === 'string') reportedCommits.push(commit)
@@ -129,8 +132,7 @@ export async function collectFacts(channel: ChannelFacts, head: string, extra: F
       if (typeof version === 'number' && (directiveVersion === undefined || version > directiveVersion)) directiveVersion = version
     }
   }
-  const state = foldState(messages as never)
-  const unresolvedBlocking = state.unresolvedFindings.filter((entry) => entry.finding.severity === 'blocking').length
+  const unresolvedBlocking = view.unresolvedFindings.filter((entry) => entry.finding.severity === 'blocking').length
   return {
     head,
     ...(extra.headError === undefined ? {} : { headError: extra.headError }),

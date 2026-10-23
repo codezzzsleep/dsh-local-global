@@ -36,7 +36,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@local-global/lg-protocol": "workspace:*"
+    "@local-global/lg-protocol": "workspace:*",
+    "@local-global/dsh-lg-common": "workspace:*"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "~4.0.5",

@@ -17,7 +17,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 
-import { validateMessage, type ParsedMessage } from '@local-global/lg-protocol'
+import { foldChannel, validateMessage, type ParsedMessage } from '@local-global/lg-protocol'
 import type { Context } from '@deepseek-ai/cordis'
 // Module augmentation only: `ctx.tools` is declared in dsh-tools.
 import type {} from '@deepseek-ai/dsh-tools'
@@ -118,6 +118,11 @@ export function applyPatch(patch: { name: string; base: string; bytes: number; s
     const before = git(['rev-parse', 'HEAD'], cwd).stdout.trim()
     const applied = git(['am', '--3way', file], cwd)
     if (applied.status === 0) {
+      const owned = adoptAuthorship(before, cwd)
+      if (owned !== undefined) {
+        git(['reset', '--hard', before], cwd)
+        return { verdict: 'REJECTED', detail: `applied, but could not re-author the commits as the local identity, worktree restored: ${owned}` }
+      }
       const head = git(['rev-parse', 'HEAD'], cwd).stdout.trim()
       return { verdict: 'APPLIED', detail: `applied ${name}`, commit: head }
     }
@@ -134,6 +139,38 @@ export function applyPatch(patch: { name: string; base: string; bytes: number; s
   } finally {
     rmSync(scratch, { recursive: true, force: true })
   }
+}
+
+/**
+ * Re-create the commits `git am` made on top of `before` with the local
+ * identity as author. SPEC hard constraint 5: no author other than the machine's
+ * own git identity may appear in the repository, and `git am` keeps the
+ * patch's `From:`. Trees and messages are kept byte for byte.
+ * @returns undefined on success, or why it failed.
+ */
+function adoptAuthorship(before: string, cwd: string): string | undefined {
+  const ident = /^(.*) <(.*)> \d+ [+-]\d{4}$/.exec(git(['var', 'GIT_AUTHOR_IDENT'], cwd).stdout.trim())
+  if (ident === null) return 'git var GIT_AUTHOR_IDENT gave no identity'
+  const [, myName, myEmail] = ident
+  const commits = git(['rev-list', '--reverse', `${before}..HEAD`], cwd).stdout.split('\n').filter((line) => line.length > 0)
+  const foreign = commits.some((sha) => git(['log', '-1', '--format=%an%x00%ae', sha], cwd).stdout.trim() !== `${myName}\u0000${myEmail}`)
+  if (!foreign) return undefined
+
+  let parent = before
+  for (const sha of commits) {
+    const raw = spawnSync('git', ['cat-file', 'commit', sha], { cwd })
+    if (raw.status !== 0) return `cannot read commit ${sha}`
+    const text = raw.stdout as Buffer
+    const split = text.indexOf('\n\n')
+    const message = split === -1 ? Buffer.alloc(0) : text.subarray(split + 2)
+    const tree = git(['rev-parse', `${sha}^{tree}`], cwd).stdout.trim()
+    const created = spawnSync('git', ['commit-tree', tree, '-p', parent, '-F', '-'], { cwd, input: message })
+    if (created.status !== 0) return String(created.stderr ?? '').trim().slice(0, 200)
+    parent = String(created.stdout).trim()
+  }
+  const head = git(['rev-parse', 'HEAD'], cwd).stdout.trim()
+  const moved = git(['update-ref', '-m', 'lg-patch-apply: local authorship', 'HEAD', parent, head], cwd)
+  return moved.status === 0 ? undefined : moved.stderr.trim().slice(0, 200)
 }
 
 export function apply(ctx: Context): void {
@@ -169,12 +206,24 @@ export function apply(ctx: Context): void {
         throw new Error('lg_apply_patch: lg-channel is not composed (install @local-global/dsh-lg-common), so the PATCH and its attachment cannot be fetched')
       }
 
-      const message = (await channel.all()).find((entry) => entry.seq === seq && entry.type === 'PATCH')
+      const view = foldChannel(await channel.all())
+      const message = view.analysis.ordered.find((entry) => entry.seq === seq && entry.type === 'PATCH')
       if (message === undefined) throw new Error(`lg_apply_patch: no PATCH message at #${seq}`)
       // Only Global proposes patches, and only a well-formed message is applied.
       if (message.sender !== 'global') return { verdict: 'REJECTED', detail: `PATCH #${seq} was sent by ${message.sender}; only global may send a PATCH` }
       const problems = validateMessage(message)
       if (problems.length > 0) return { verdict: 'REJECTED', detail: `PATCH #${seq} is not a valid message: ${problems.map((problem) => problem.message).join('; ')}` }
+      // Valid on its own is not enough: a reused id makes it ineffective, and a
+      // superseded message must not be executed (CH-10).
+      if (!view.analysis.effective.some((entry) => entry.filename === message.filename)) {
+        const issues = view.analysis.issues.get(message.filename) ?? []
+        return { verdict: 'REJECTED', detail: `PATCH #${seq} is not effective: ${issues.map((issue) => issue.message).join('; ') || 'not part of the effective channel'}` }
+      }
+      const id = message.fields['id']
+      const replacer = typeof id === 'string' ? view.analysis.supersededBy.get(id) : undefined
+      if (replacer !== undefined) {
+        return { verdict: 'REJECTED', detail: `PATCH #${seq} is superseded by ${String(replacer.fields['id'] ?? replacer.seq)}; a superseded message is not executed` }
+      }
 
       const fields = message.fields
       const patchName = String(fields['name'])
@@ -186,7 +235,12 @@ export function apply(ctx: Context): void {
       const refused = guard?.check !== undefined ? guard.check('lg_apply_patch', { cwd: dir }, here) : protectReason(resolveProtectConfig({}), 'lg_apply_patch', { cwd: dir }, here)
       if (refused !== undefined) throw new Error(refused)
 
-      const data = await channel.readAttachment(`attachments/${seq}/${patchName}`)
+      let data: Buffer | undefined
+      try {
+        data = await channel.readAttachment(`attachments/${seq}/${patchName}`)
+      } catch (error) {
+        return { verdict: 'REJECTED', detail: `attachment of PATCH #${seq} cannot be read: ${error instanceof Error ? error.message : String(error)}` }
+      }
       return applyPatch(
         {
           name: patchName,

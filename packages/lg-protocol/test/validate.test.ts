@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isLegacyMessage,
   MESSAGE_TYPES,
   REQUIRED_FIELDS,
   validateMessage,
@@ -104,6 +105,14 @@ describe('validateMessage — legacy exemption', () => {
     expect(validateMessage(otherSender).length).toBeGreaterThan(0)
     const otherSeq = makeMessage('TASK', { seq: '0002', fields: { hello: 'world' } })
     expect(validateMessage(otherSeq).length).toBeGreaterThan(0)
+  })
+
+  it('does not exempt a fresh channel\'s 0001 TASK or 0002 REPORT that carries an id', () => {
+    const report = makeMessage('REPORT' as MessageType, { seq: '0002', fields: { id: 'L-0001', hello: 'world' } })
+    expect(validateMessage(report).length).toBeGreaterThan(0)
+    expect(isLegacyMessage(report)).toBe(false)
+    const task = makeMessage('TASK', { seq: '0001', fields: { id: 'H-0001' } })
+    expect(isLegacyMessage(task)).toBe(false)
   })
 
   it('applies §4 rules from 0003 onward', () => {

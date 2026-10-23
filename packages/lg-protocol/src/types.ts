@@ -143,12 +143,15 @@ export function isLegacySeq(seq: string): boolean {
 
 /**
  * True only for the two archived pre-contract messages, `0001-human-TASK.md`
- * and `0002-local-REPORT.md` (PR-9 / channel-git.md §10). Anything else in the
- * legacy range is validated like any other message.
+ * and `0002-local-REPORT.md` without an `id` field (PR-9 / channel-git.md §10).
+ * Anything else in the legacy range is validated like any other message.
  * @param message - coordinates of the message.
  * @returns whether the message is exempt from field validation.
  */
-export function isLegacyMessage(message: Pick<ParsedMessage, 'seq' | 'sender' | 'type'>): boolean {
+export function isLegacyMessage(message: Pick<ParsedMessage, 'seq' | 'sender' | 'type'> & { readonly fields?: Readonly<Record<string, unknown>> }): boolean {
+  // Pre-contract messages carry no id; every new message does (lg_post always
+  // assigns one), so a fresh channel's 0002 REPORT is never mistaken for one.
+  if (message.fields !== undefined && Object.prototype.hasOwnProperty.call(message.fields, 'id')) return false
   return (
     (message.seq === '0001' && message.sender === 'human' && message.type === 'TASK') ||
     (message.seq === '0002' && message.sender === 'local' && message.type === 'REPORT')

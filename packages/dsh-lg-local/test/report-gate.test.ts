@@ -1,10 +1,19 @@
 import { describe, expect, it } from 'vitest'
 
+import { formatMessage, parseMessage, type MessageType, type ParsedMessage, type Sender } from '@local-global/lg-protocol'
 import { apply, claimsCompletion, collectFacts, gateMessage, gateReasons, type GateFacts } from '../src/report-gate.js'
 import { agentIn, fakeCtx, git, repo, tmp } from './fake-ctx.js'
 
-type Message = { seq: string; sender: string; type: string; fields: Record<string, unknown> }
-const message = (seq: string, sender: string, type: string, fields: Record<string, unknown> = {}): Message => ({ seq, sender, type, fields })
+type Message = ParsedMessage
+/** A rendered-and-parsed message, as the channel would hand it over. */
+const message = (seq: string, sender: Sender, type: MessageType, fields: Record<string, unknown> = {}): ParsedMessage => {
+  const base: Record<string, unknown> =
+    type === 'REPORT' ? { refs: [], evidence: [], negative_tests: [] } : type === 'REVIEW' ? { refs: [], verdict: 'changes-requested' } : {}
+  const rendered = formatMessage({ seq, sender, type, fields: { ...base, ...fields } })
+  const parsed = parseMessage(rendered.filename, rendered.text)
+  if (!parsed.ok) throw new Error(`fixture ${seq} does not parse`)
+  return parsed.message
+}
 
 const facts = (over: Partial<GateFacts> = {}): GateFacts => ({
   head: 'abc',
@@ -53,31 +62,51 @@ describe('AG-1 / RG-1: spent approvals and unreadable HEAD are reasons', () => {
 })
 
 describe('collectFacts', () => {
-  const channel = (messages: Message[]) => ({ all: async () => messages })
+  const channel = (messages: ParsedMessage[]) => ({ all: async () => messages })
+  /** A rendered-and-parsed message, as the channel would hand it over. */
+  const valid = (seq: string, sender: Sender, type: MessageType, fields: Record<string, unknown>): ParsedMessage => {
+    const rendered = formatMessage({ seq, sender, type, fields })
+    const parsed = parseMessage(rendered.filename, rendered.text)
+    if (!parsed.ok) throw new Error(`fixture ${seq} does not parse`)
+    return parsed.message
+  }
+  const sha = (c: string) => c.repeat(40)
+  const directive = (seq: string, version: number) =>
+    valid(seq, 'global', 'DIRECTIVE', { version, goal: 'g', priorities: ['p'], acceptance: [{ id: 'AC-1', text: 'CH-1' }], scope: { in: [], out: [] } })
+  const report = (seq: string, fields: Record<string, unknown>) => valid(seq, 'local', 'REPORT', { refs: [], evidence: [], negative_tests: [], ...fields })
+  const review = (seq: string, findings: unknown[]) => valid(seq, 'global', 'REVIEW', { refs: [], verdict: 'changes-requested', findings })
 
   it('folds reports, directive versions, blocking findings and consumed approvals', async () => {
     const result = await collectFacts(
       channel([
-        message('0003', 'global', 'DIRECTIVE', { version: 4 }),
-        message('0004', 'global', 'DIRECTIVE', { version: 5 }),
-        message('0005', 'local', 'REPORT', { commit: 'aaa', directive_version: 4, consumed_approvals: ['0010'] }),
-        message('0006', 'local', 'REPORT', { commit: 'bbb', directive_version: 5 }),
-        message('0007', 'global', 'REVIEW', { findings: [{ id: 'F-1', severity: 'blocking', text: 'x' }, { id: 'F-2', severity: 'minor', text: 'y' }] }),
-        message('0008', 'local', 'REPORT', { commit: 'ccc', directive_version: 5, resolves: ['0007/F-1'] }),
-        message('0009', 'global', 'REVIEW', { findings: [{ id: 'F-1', severity: 'blocking', text: 'again' }] }),
+        directive('0003', 4),
+        directive('0004', 5),
+        report('0005', { commit: sha('a'), directive_version: 4, consumed_approvals: ['0010'] }),
+        report('0006', { commit: sha('b'), directive_version: 5 }),
+        review('0007', [{ id: 'F-1', severity: 'blocking', text: 'x' }, { id: 'F-2', severity: 'minor', text: 'y' }]),
+        report('0008', { commit: sha('c'), directive_version: 5, resolves: ['0007/F-1'] }),
+        review('0009', [{ id: 'F-1', severity: 'blocking', text: 'again' }]),
       ]),
-      'ccc',
+      sha('c'),
       { consumed: ['0010', '0011'], claimsCompletion: true },
     )
     expect(result).toMatchObject({
-      head: 'ccc',
-      reportedCommits: ['aaa', 'bbb', 'ccc'],
+      head: sha('c'),
+      reportedCommits: [sha('a'), sha('b'), sha('c')],
       directiveVersion: 5,
       reportedDirectiveVersions: [4, 5, 5],
       unresolvedBlocking: 1,
       claimsCompletion: true,
       unreportedApprovals: ['0011'],
     })
+  })
+
+  it('ignores invalid messages: a REPORT from global, a malformed REPORT, a malformed DIRECTIVE', async () => {
+    const forged = valid('0005', 'global', 'REPORT', { refs: [], commit: sha('c'), directive_version: 9, evidence: [], negative_tests: [], consumed_approvals: ['0011'] })
+    const malformed = valid('0006', 'local', 'REPORT', { commit: 'ccc', directive_version: 5, consumed_approvals: ['0011'] })
+    const badDirective = valid('0007', 'global', 'DIRECTIVE', { version: 9 })
+    const result = await collectFacts(channel([directive('0003', 4), forged, malformed, badDirective]), sha('c'), { consumed: ['0011'] })
+    expect(result).toMatchObject({ reportedCommits: [], directiveVersion: 4, reportedDirectiveVersions: [], unreportedApprovals: ['0011'] })
   })
 
   it('treats no consumed approvals and no messages as nothing owed', async () => {
@@ -99,7 +128,8 @@ describe('lg-report-gate wiring', () => {
     apply(fake.ctx, config)
     const stop = (turn = 1) => fake.emit('agent/turn-stopping', { agent, turn })
     const reportHead = (): void => {
-      messages.push(message(String(messages.length + 1).padStart(4, '0'), 'local', 'REPORT', { commit: git(dir, 'rev-parse', 'HEAD').trim(), directive_version: 1 }))
+      const next = Math.max(0, ...messages.map((entry) => Number(entry.seq))) + 1
+      messages.push(message(String(next).padStart(4, '0'), 'local', 'REPORT', { id: `L-${String(next).padStart(4, '0')}`, commit: git(dir, 'rev-parse', 'HEAD').trim(), directive_version: 1 }))
     }
     return { dir, steers, agent, fake, stop, messages, reportHead }
   }
