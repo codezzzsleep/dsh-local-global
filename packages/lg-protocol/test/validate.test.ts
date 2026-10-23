@@ -87,9 +87,23 @@ describe('validateMessage — field shapes', () => {
 })
 
 describe('validateMessage — legacy exemption', () => {
-  it('skips §4 rules for sequences at or below 0002', () => {
-    const message = makeMessage('REPORT' as MessageType, { seq: '0002', fields: { hello: 'world' } })
-    expect(validateMessage(message)).toEqual([])
+  it('skips §4 rules for the two archived pre-contract messages only', () => {
+    const report = makeMessage('REPORT' as MessageType, { seq: '0002', fields: { hello: 'world' } })
+    expect(validateMessage(report)).toEqual([])
+    const task = makeMessage('TASK', { seq: '0001', fields: { hello: 'world' } })
+    expect(validateMessage(task)).toEqual([])
+  })
+
+  it('still validates any other message at 0001 or 0002', () => {
+    // An invalid sender on a fresh channel used to ride the seq-only exemption.
+    const wrongSender = makeMessage('DIRECTIVE', { seq: '0001', sender: 'local' })
+    expect(validateMessage(wrongSender).map((error) => error.code)).toContain('sender-not-allowed')
+    const wrongType = makeMessage('DECISION', { seq: '0002', fields: { hello: 'world' } })
+    expect(validateMessage(wrongType).map((error) => error.code)).toContain('missing-field')
+    const otherSender = makeMessage('REPORT', { seq: '0002', sender: 'global', fields: { hello: 'world' } })
+    expect(validateMessage(otherSender).length).toBeGreaterThan(0)
+    const otherSeq = makeMessage('TASK', { seq: '0002', fields: { hello: 'world' } })
+    expect(validateMessage(otherSeq).length).toBeGreaterThan(0)
   })
 
   it('applies §4 rules from 0003 onward', () => {
@@ -137,5 +151,66 @@ describe('validateMessage — REVIEW', () => {
     expect(validateMessage(bare).some((error) => error.message.includes('resolves'))).toBe(true)
     const bad = makeMessage('REPORT', { fields: { ...base, resolves: ['0011/F-1', 'nope'] } })
     expect(validateMessage(bad).some((error) => error.message.includes('resolves'))).toBe(true)
+  })
+})
+
+describe('validateMessage — optional REPORT fields', () => {
+  const base = (): Record<string, unknown> => ({ ...makeMessage('REPORT').fields })
+  const codes = (extra: Record<string, unknown>): string[] =>
+    validateMessage(makeMessage('REPORT', { fields: { ...base(), ...extra } })).map((error) => `${error.code}:${error.message}`)
+
+  it('requires checkpoint to be a boolean', () => {
+    expect(codes({ checkpoint: true })).toEqual([])
+    expect(codes({ checkpoint: false })).toEqual([])
+    expect(codes({ checkpoint: 'yes' }).join()).toContain('checkpoint')
+    expect(codes({ checkpoint: 1 }).join()).toContain('checkpoint')
+  })
+
+  it('requires meanwhile to be a list of strings', () => {
+    expect(codes({ meanwhile: ['write docs'] })).toEqual([])
+    expect(codes({ meanwhile: 'write docs' }).join()).toContain('meanwhile')
+    expect(codes({ meanwhile: [1] }).join()).toContain('meanwhile')
+  })
+
+  it('requires open_questions to be a list of strings', () => {
+    expect(codes({ open_questions: ['0037'] })).toEqual([])
+    expect(codes({ open_questions: { a: 1 } }).join()).toContain('open_questions')
+    expect(codes({ open_questions: [{ a: 1 }] }).join()).toContain('open_questions')
+  })
+})
+
+describe('validateMessage — ISOLATION_REPORT', () => {
+  const withProbes = (probes: unknown) => validateMessage(makeMessage('ISOLATION_REPORT', { fields: { probes } }))
+
+  it('accepts complete probes', () => {
+    expect(withProbes([{ name: 'a', expected: 'x', actual: 'x', pass: true }])).toEqual([])
+  })
+
+  it('requires expected and actual, not just name and pass', () => {
+    expect(withProbes([{ name: 'a', pass: true }]).map((error) => error.message).join()).toContain('probes[0]')
+    expect(withProbes([{ name: 'a', expected: 'x', pass: true }]).length).toBeGreaterThan(0)
+  })
+
+  it('rejects a non-boolean pass and an empty name, and names each bad probe', () => {
+    const errors = withProbes([
+      { name: 'ok', expected: 'x', actual: 'x', pass: true },
+      { name: 'bad', expected: 'x', actual: 'x', pass: 'true' },
+      { name: '', expected: 'x', actual: 'x', pass: false },
+    ])
+    expect(errors.map((error) => error.message).join()).toContain('probes[1]')
+    expect(errors.map((error) => error.message).join()).toContain('probes[2]')
+    expect(errors.map((error) => error.message).join()).not.toContain('probes[0]')
+  })
+})
+
+describe('validateMessage — PATCH name doubles as an attachment path', () => {
+  const withName = (name: unknown) => validateMessage(makeMessage('PATCH', { fields: { ...makeMessage('PATCH').fields, name } }))
+
+  it('accepts a plain file name', () => {
+    expect(withName('0001-docs.patch')).toEqual([])
+  })
+
+  it.each(['../x.patch', 'a/b.patch', '..', '.hidden', '', 'a\\b'])('rejects %j', (name) => {
+    expect(withName(name).some((error) => error.code === 'field-shape' && error.message.includes('name'))).toBe(true)
   })
 })
