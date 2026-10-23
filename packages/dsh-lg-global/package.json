@@ -1,7 +1,7 @@
 {
   "name": "@local-global/dsh-lg-global",
   "version": "0.0.0",
-  "description": "Global-side Local–Global plugins for DeepSeek Harness: preset, scope, repo, integrity.",
+  "description": "Global-side Local–Global plugins for DeepSeek Harness: preset, scope, repo, directive, checkpoint, integrity.",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -16,6 +16,14 @@
     "./integrity": {
       "types": "./lib/integrity.d.ts",
       "default": "./lib/integrity.js"
+    },
+    "./directive": {
+      "types": "./lib/directive.d.ts",
+      "default": "./lib/directive.js"
+    },
+    "./checkpoint": {
+      "types": "./lib/checkpoint.d.ts",
+      "default": "./lib/checkpoint.js"
     },
     "./role": {
       "types": "./lib/role.d.ts",
