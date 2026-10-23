@@ -4,9 +4,11 @@
  * Lives under the DSH home (`$DSH_HOME/lg/<slug>.json`) so it survives a
  * restart with the profile; it is never committed to the channel repository.
  */
+import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { Role } from './config.js'
+import { redactSecrets } from './redact.js'
 
 /** Persisted state of one `lg-channel` instance. */
 export interface PersistedState {
@@ -20,12 +22,31 @@ export interface PersistedState {
   readonly deliveredIds: string[]
   /** Set when a human HALT was delivered; polling stops for good. */
   readonly halted: boolean
+  /** Message files this side archived itself (relay); never delivered back (CH-9). */
+  readonly archived: string[]
+  /** Sent-copy mismatches already reported, as `<file>@<archive digest>`. */
+  readonly reportedMismatches: string[]
   readonly updatedAt: string
 }
 
 /** The state a fresh channel starts from. */
 export function initialState(repo: string, role: Role): PersistedState {
-  return { repo, role, cursor: '0000', boundSessionId: null, deliveredIds: [], halted: false, updatedAt: new Date().toISOString() }
+  return {
+    // Only a redacted URL is kept on disk: the state file is for matching, not for connecting.
+    repo: redactSecrets(repo),
+    role,
+    cursor: '0000',
+    boundSessionId: null,
+    deliveredIds: [],
+    halted: false,
+    archived: [],
+    reportedMismatches: [],
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+function strings(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }
 
 /** Atomic JSON state file. */
@@ -81,14 +102,19 @@ export class StateStore {
     try {
       const raw = await readFile(this.file, 'utf8')
       const parsed = JSON.parse(raw) as Partial<PersistedState>
-      if (parsed.repo !== repo || parsed.role !== role) return initialState(repo, role)
+      // Older files hold the raw URL; compare redacted forms so both match.
+      if (typeof parsed.repo !== 'string' || redactSecrets(parsed.repo) !== redactSecrets(repo) || parsed.role !== role) {
+        return initialState(repo, role)
+      }
       return {
-        repo,
+        repo: redactSecrets(repo),
         role,
         cursor: typeof parsed.cursor === 'string' ? parsed.cursor : '0000',
-        deliveredIds: Array.isArray(parsed.deliveredIds) ? parsed.deliveredIds.filter((id): id is string => typeof id === 'string') : [],
+        deliveredIds: strings(parsed.deliveredIds),
         boundSessionId: typeof parsed.boundSessionId === 'string' ? parsed.boundSessionId : null,
         halted: parsed.halted === true,
+        archived: strings(parsed.archived),
+        reportedMismatches: strings(parsed.reportedMismatches),
         updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
       }
     } catch {
@@ -102,7 +128,7 @@ export class StateStore {
    */
   async save(state: PersistedState): Promise<void> {
     await mkdir(dirname(this.file), { recursive: true })
-    const scratch = `${this.file}.${process.pid}.tmp`
+    const scratch = `${this.file}.${process.pid}.${randomUUID()}.tmp`
     await writeFile(scratch, `${JSON.stringify(state, null, 2)}\n`, 'utf8')
     await rename(scratch, this.file)
   }
