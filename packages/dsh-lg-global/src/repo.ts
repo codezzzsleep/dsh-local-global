@@ -12,6 +12,7 @@
  * stays paused.
  */
 import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { existsSync, mkdtempSync } from 'node:fs'
 import { mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -343,7 +344,8 @@ export function repoSnapshot(config: RepoConfig): Record<string, unknown> {
  * Apply one probe outcome to the shared state.
  *
  * The rule from SPEC "lg-repo": `writable` pauses, `denied` passes,
- * `inconclusive` is a warning that never pauses.
+ * `inconclusive` is a warning that never pauses and never lifts a pause: only
+ * `denied` is proof the credential cannot write.
  * @param state - the shared guard state.
  * @param probe - the probe outcome and its raw detail.
  * @returns which branch was taken, for the caller's logging.
@@ -359,7 +361,6 @@ export function recordProbeOutcome(state: GuardState, probe: PushProbe): 'pause'
     state.clearWarning('push-probe')
     return 'pass'
   }
-  state.resume('push-probe')
   state.warn('push-probe', `inconclusive: ${probe.detail.slice(0, 300)}`)
   return 'warn'
 }
@@ -464,6 +465,12 @@ const NETWORK_MARKERS = [
   /proxy/iu,
 ]
 
+/**
+ * Client-side refusals of a ref update. Git only gets this far after the
+ * receive-pack advertisement was served, i.e. the credential may write.
+ */
+const REJECTED_MARKERS = [/!\s+\[rejected\]/iu, /\((?:fetch first|non-fast-forward)\)/iu]
+
 /** SPEC "lg-repo" markers for a refused write, matched on git's own message only. */
 const PERMISSION_MARKERS = [
   /permission denied/iu,
@@ -484,15 +491,18 @@ const PERMISSION_MARKERS = [
  * `https://host/read-only.git` mentions "read-only" and must stay inconclusive.
  * @param stderr - git's standard error.
  * @param remote - the remote URL, removed before matching.
- * @returns `denied` only for a permission marker with no network failure.
+ * @returns `writable` for a client-side ref rejection, `denied` only for a permission marker with no network failure.
  */
-export function classifyPushFailure(stderr: string, remote: string): 'denied' | 'inconclusive' {
+export function classifyPushFailure(stderr: string, remote: string): 'writable' | 'denied' | 'inconclusive' {
   const cleaned = stderr
     .split(remote)
     .join('<remote>')
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/giu, '<url>')
     .replace(/(could not resolve host:)\s*\S+/giu, '$1 <host>')
   if (NETWORK_MARKERS.some((marker) => marker.test(cleaned))) return 'inconclusive'
+  // Lines the server sent ("remote: ...") are not evidence of what git did.
+  const local = cleaned.split('\n').filter((line) => !/^\s*remote:/iu.test(line)).join('\n')
+  if (REJECTED_MARKERS.some((marker) => marker.test(local))) return 'writable'
   return PERMISSION_MARKERS.some((marker) => marker.test(cleaned)) ? 'denied' : 'inconclusive'
 }
 
@@ -543,7 +553,9 @@ export async function probePushDenied(config: RepoConfig, options: { allowFile?:
       return { verdict: 'inconclusive', exitCode: null, detail: `probe setup failed: ${error instanceof Error ? error.message : String(error)}` }
     }
     try {
-      const result = await runGit(['push', '--dry-run', '--no-verify', '--', config.remote, `HEAD:refs/heads/${config.branch}`], {
+      // A fresh ref cannot be rejected as non-fast-forward, so an existing branch does not mask a writable credential.
+      const probeRef = `refs/heads/lg-probe-${randomBytes(8).toString('hex')}`
+      const result = await runGit(['push', '--dry-run', '--no-verify', '--', config.remote, `HEAD:${probeRef}`], {
         cwd: scratch,
         config: proxyArgs,
         allowFile,
