@@ -4,6 +4,7 @@
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { redactSecrets } from './redact.js'
 
 /** The side of the channel this process plays. */
 export type Role = 'local' | 'global'
@@ -48,7 +49,8 @@ export function dshHome(): string {
 
 /** Short, filesystem-safe repository identity plus a hash of the full URL. */
 export function repoSlug(repo: string): string {
-  const tail = repo.replace(/\/+$/, '').split('/').pop() ?? 'channel'
+  // The readable part must not carry URL credentials into a directory name.
+  const tail = redactSecrets(repo).replace(/\/+$/, '').split('/').pop() ?? 'channel'
   const base = tail.replace(/\.git$/, '').replace(/[^A-Za-z0-9._-]+/g, '-') || 'channel'
   const digest = createHash('sha256').update(repo, 'utf8').digest('hex').slice(0, 8)
   return `${base}-${digest}`
@@ -61,18 +63,16 @@ function asBoolean(value: unknown, fallback: boolean, field: string): boolean {
 }
 
 /**
- * Validate raw config and fill in the documented defaults.
- * @param raw - config object from the composition.
- * @returns the resolved configuration.
- * @throws TypeError when a required field is missing or a value is out of range.
- */
-/**
- * Resolve and validate the channel config.
- * @param raw - profile-supplied config.
+ * Resolve and validate the channel config (CH-1).
+ * @param raw - profile-supplied config; a missing config is a config error, not a crash.
  * @param home - DSH_HOME to resolve defaults against; tests pass one explicitly.
  * @returns the effective config.
+ * @throws TypeError when a required field is missing or a value is out of range.
  */
-export function resolveChannelConfig(raw: RawChannelConfig, home: string = dshHome()): ChannelConfig {
+export function resolveChannelConfig(raw: RawChannelConfig | null | undefined, home: string = dshHome()): ChannelConfig {
+  if (raw === undefined || raw === null || typeof raw !== 'object') {
+    throw new TypeError('lg-channel: configuration is missing; set "repo" (git URL of the channel repository) and "role" ("local" or "global")')
+  }
   if (typeof raw.repo !== 'string' || raw.repo.trim().length === 0) {
     throw new TypeError('lg-channel: "repo" is required (git URL of the channel repository)')
   }
@@ -80,7 +80,12 @@ export function resolveChannelConfig(raw: RawChannelConfig, home: string = dshHo
     throw new TypeError('lg-channel: "role" is required and must be "local" or "global"')
   }
   const repo = raw.repo
+  // A leading dash would be read by git as an option, not as a remote.
+  if (repo.trim().startsWith('-')) throw new TypeError('lg-channel: "repo" must be a git URL or path, not an option')
   const branch = raw.branch === undefined ? 'main' : String(raw.branch)
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u.test(branch) || branch.includes('..') || branch.endsWith('/') || branch.endsWith('.lock')) {
+    throw new TypeError(`lg-channel: "branch" is not a usable branch name: ${JSON.stringify(branch)}`)
+  }
   const pollSeconds = raw.pollSeconds === undefined ? 60 : Number(raw.pollSeconds)
   if (!Number.isFinite(pollSeconds) || pollSeconds < 1) {
     throw new TypeError('lg-channel: "pollSeconds" must be a positive number')
