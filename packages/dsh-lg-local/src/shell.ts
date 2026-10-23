@@ -46,6 +46,8 @@ interface State {
   readonly vars: Map<string, string | undefined>
   readonly dialect: 'posix' | 'pwsh'
   depth: number
+  /** Nesting went past MAX_DEPTH, so some commands were not seen. */
+  truncated: boolean
 }
 
 const MAX_DEPTH = 5
@@ -82,9 +84,17 @@ export const SHELL_TOOLS: readonly string[] = ['bash', 'pwsh', 'powershell', 'sh
  * @returns every command, including those inside `sh -c`, `eval`, and `$(...)`.
  */
 export function parseShell(text: string, options: ParseOptions = {}): Invocation[] {
-  const state: State = { out: [], vars: new Map(), dialect: options.dialect ?? 'posix', depth: 0 }
+  return parseShellDetailed(text, options).commands
+}
+
+/**
+ * Like {@link parseShell}, and also says whether nesting was too deep to see
+ * every command, so a gate can refuse what it could not inspect.
+ */
+export function parseShellDetailed(text: string, options: ParseOptions = {}): { commands: Invocation[]; truncated: boolean } {
+  const state: State = { out: [], vars: new Map(), dialect: options.dialect ?? 'posix', depth: 0, truncated: false }
   scan(text, state)
-  return state.out
+  return { commands: state.out, truncated: state.truncated }
 }
 
 /** The index of the parenthesis closing the one just before `from`, or the end of the text. */
@@ -209,7 +219,10 @@ function scan(text: string, state: State): void {
   }
 
   const nested = (payload: string): void => {
-    if (state.depth >= MAX_DEPTH) return
+    if (state.depth >= MAX_DEPTH) {
+      state.truncated = true
+      return
+    }
     state.depth += 1
     scan(payload, state)
     state.depth -= 1
@@ -473,7 +486,10 @@ function emit(raw: RawCommand, state: State): void {
   }
   if (argv.length === 0) return
   const head = basename(argv[0] ?? '')
-  if (state.depth >= MAX_DEPTH) return
+  if (state.depth >= MAX_DEPTH) {
+    if (SHELLS.has(head) || head === 'eval') state.truncated = true
+    return
+  }
   state.depth += 1
   try {
     if (SHELLS.has(head)) {
