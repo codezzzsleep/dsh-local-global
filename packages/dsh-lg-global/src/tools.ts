@@ -25,7 +25,6 @@ export const DEFAULT_ALLOWED_TOOLS = [
   // dsh-lg-common: session evidence (in the preset) and the channel tools
   'lg_evidence_session',
   'lg_post',
-  'lg_record_relayed',
   'lg_read',
   'lg_open_questions',
   // M4: Global's write exit
