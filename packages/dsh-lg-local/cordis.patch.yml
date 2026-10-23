@@ -1,16 +1,45 @@
 # @local-global/dsh-lg-local
 #
 # Local-side plugins: evidence that is original, approval before C-class
-# actions, and hands off the two protected areas. They add capability and turn
-# nothing off, so this bundle is an ordinary row insert.
+# actions, and hands off the protected areas. They add capability and remove
+# none of dsh's own tools, so this bundle is an ordinary row insert.
+#
+# Install it next to @local-global/dsh-lg-common (it provides `lg-channel` and
+# the `lg_evidence_session` plugin used below). Without `lg-channel`:
+#   lg-action-gate  refuses every C-class command (no approval can be read)
+#   lg-report-gate  is inactive and logs a warning once
+#   lg-patch-apply  lg_apply_patch fails: the PATCH cannot be fetched
+#   lg-evidence, lg-protect  do not need the channel
+#
+# lg-protect comes before lg-action-gate so a call it refuses never spends an
+# approval. Optional config:
+#
+#   - id: lg-protect
+#     config:
+#       protectedPaths: ['~/.lg-global', '<reposandbox storageDir>']  # default: ['~/.lg-global']
+#   - id: lg-evidence
+#     config:
+#       evidenceRoot: evidence          # default: <launch dir>/evidence
+#       digestCommand: 'git:tree'       # default; or a shell command printing an artifact digest
+#       publicDomains: ['example.com']  # refused in evidence (EV-5)
+#   - id: lg-action-gate
+#     config:
+#       stateDir: /path                 # default: lg-channel's stateDir (consumed-approvals.json)
+#   - id: lg-report-gate
+#     config:
+#       maxSteersPerTurn: 3
 - insert:
     - id: lg-evidence
       name: '@local-global/dsh-lg-local/evidence'
+    # EV-3: the shared session exporter, one implementation with Global's. Its
+    # row id differs from `lg-evidence` above; both plugins are named that.
+    - id: lg-evidence-session
+      name: '@local-global/dsh-lg-common/evidence'
     - id: lg-patch-apply
       name: '@local-global/dsh-lg-local/patch'
     - id: lg-report-gate
       name: '@local-global/dsh-lg-local/report-gate'
-    - id: lg-action-gate
-      name: '@local-global/dsh-lg-local/action-gate'
     - id: lg-protect
       name: '@local-global/dsh-lg-local/protect'
+    - id: lg-action-gate
+      name: '@local-global/dsh-lg-local/action-gate'
