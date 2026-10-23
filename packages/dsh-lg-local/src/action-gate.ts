@@ -24,7 +24,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import { provide, service } from './common.js'
 import { ApprovalLedger, LedgerError, type SpentApproval } from './ledger.js'
 import { BUILTIN_DETECTORS } from './matchers.js'
-import { SHELL_TOOLS, parseShell, type Invocation } from './shell.js'
+import { SHELL_TOOLS, parseShellDetailed, type Invocation } from './shell.js'
 
 export const name = 'lg-action-gate'
 export const inject = ['tools']
@@ -45,6 +45,9 @@ export interface GateRule {
 
 /** Prefix of a `match` that selects a built-in detector. */
 export const BUILTIN_PREFIX = 'builtin:'
+
+/** Synthetic rule for shell text nested too deeply to inspect. */
+export const NESTING_RULE: GateRule = { id: 'shell-nesting-too-deep', tool: 'bash', match: `${BUILTIN_PREFIX}nesting-too-deep` }
 
 /**
  * The rules the SPEC requires at least: force push, `rm -rf`, publishing,
@@ -146,8 +149,13 @@ export function matchRules(config: ActionGateConfig, toolName: string, args: unk
   if (text === undefined) return []
   const applicable = config.rules.filter((rule) => toolApplies(rule, toolName))
   if (applicable.length === 0) return []
-  const commands = parseShell(text, { dialect: toolName === 'pwsh' || toolName === 'powershell' ? 'pwsh' : 'posix' })
+  const { commands, truncated } = parseShellDetailed(text, { dialect: toolName === 'pwsh' || toolName === 'powershell' ? 'pwsh' : 'posix' })
   const found: GateMatch[] = []
+  // Commands nested deeper than the parser follows were never inspected, so
+  // they need an approval of their own rather than passing unseen.
+  if (truncated && SHELL_TOOLS.includes(toolName)) {
+    found.push({ rule: NESTING_RULE, fingerprint: actionFingerprint(NESTING_RULE.id, text), text, detail: 'shell nesting too deep to inspect' })
+  }
   for (const rule of applicable) {
     if (found.some((entry) => entry.rule.id === rule.id)) continue
     const detail = ruleDetail(rule, text, commands)

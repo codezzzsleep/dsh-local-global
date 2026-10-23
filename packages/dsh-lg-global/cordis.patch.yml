@@ -79,5 +79,12 @@
       name: '@local-global/dsh-lg-global/scope'
     - id: lg-repo
       name: '@local-global/dsh-lg-global/repo'
+    # M4: Global's write exit and the checkpoint prompts. Both read the
+    # `lgChannel`, `lgRepo` and `lgWorkspace` services when called, so they work
+    # next to lg-channel (@local-global/dsh-lg-common) without a config of their own.
+    - id: lg-directive
+      name: '@local-global/dsh-lg-global/directive'
+    - id: lg-checkpoint
+      name: '@local-global/dsh-lg-global/checkpoint'
     - id: lg-integrity
       name: '@local-global/dsh-lg-global/integrity'
