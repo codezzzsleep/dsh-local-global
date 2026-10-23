@@ -57,13 +57,9 @@ describe('AG-1 / AG-2: C-class actions need one unused approval', () => {
     expect(spent).toEqual(['0042'])
   })
 
-  it('denies the same approval a second time: it is gone from the table', () => {
-    const fingerprint = actionFingerprint('force-push', forcePush.command)
-    const spent: string[] = []
-    // After the first use the channel's table no longer lists that DECISION.
-    expect(gateReason(config, 'bash', forcePush, [], (decision) => spent.push(decision))).toContain('force-push')
-    expect(spent).toEqual([])
-    // A different action needs its own approval: fingerprints do not transfer.
+  it('does not transfer an approval to another action', () => {
+    // Consumption itself (second use denied, restart) is exercised through the
+    // plugin in action-gate.test.ts; passing `[]` here proved nothing about it.
     const other = actionFingerprint('rm-rf', forcePush.command)
     expect(gateReason(config, 'bash', forcePush, [{ decision: '0042', fingerprint: other }], () => undefined)).toContain('force-push')
   })
