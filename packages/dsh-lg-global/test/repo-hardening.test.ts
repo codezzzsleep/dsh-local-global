@@ -195,6 +195,31 @@ describe('push probe classification (item 7)', () => {
     }
   })
 
+  it('treats a client-side ref rejection as writable: git got past the receive-pack advertisement', () => {
+    const url = 'https://github.com/o/r.git'
+    for (const stderr of [
+      `To ${url}\n ! [rejected]        HEAD -> main (fetch first)\nerror: failed to push some refs to '${url}'`,
+      ` ! [rejected]        HEAD -> main (non-fast-forward)`,
+    ]) {
+      expect(classifyPushFailure(stderr, url)).toBe('writable')
+    }
+    // Server-sent lines and network failures are not evidence of a writable credential.
+    expect(classifyPushFailure('remote: ! [rejected] HEAD -> main (fetch first)', url)).toBe('inconclusive')
+    expect(classifyPushFailure("fatal: unable to access 'https://x/': Could not resolve host: x\n ! [rejected] (fetch first)", url)).toBe('inconclusive')
+    expect(classifyPushFailure('remote: Permission to o/r.git denied to someone.', url)).toBe('denied')
+  })
+
+  it('finds a writable credential when the target branch already exists', async () => {
+    const config = { remote, branch: 'main', mirrorDir: join(root, 'unused-writable.git') }
+    const before = (await runGit(['for-each-ref', '--format=%(refname)'], { cwd: remote })).stdout
+    expect(before.trim()).toBe('refs/heads/main')
+    const probe = await probePushDenied(config, { allowFile: true })
+    expect(probe.verdict).toBe('writable')
+    expect(probe.exitCode).toBe(0)
+    // A dry run: the remote is untouched.
+    expect((await runGit(['for-each-ref', '--format=%(refname)'], { cwd: remote })).stdout).toBe(before)
+  })
+
   it('reports an unresolvable host as inconclusive even when the URL says read-only', async () => {
     const config = resolveRepoConfig({ remote: 'https://nonexistent.invalid/read-only.git', branch: 'main', mirrorDir: join(root, 'unused.git') })
     expect((await probePushDenied(config)).verdict).toBe('inconclusive')
