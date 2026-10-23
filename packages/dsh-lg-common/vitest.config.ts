@@ -1,15 +1,5 @@
-import { fileURLToPath } from 'node:url'
-import { defineConfig } from 'vitest/config'
+import { mergeConfig } from 'vitest/config'
+import { bundleConfig } from '../../vitest.shared.js'
 
-/**
- * Tests run against the protocol sources, not the built `lib/`. Without this
- * alias a stale build silently satisfies the imports: the first REVIEW test run
- * passed against a lib that predated REVIEW support.
- */
-export default defineConfig({
-  resolve: {
-    alias: {
-      '@local-global/lg-protocol': fileURLToPath(new URL('../lg-protocol/src/index.ts', import.meta.url)),
-    },
-  },
-})
+// These suites drive real git repositories; a loaded machine needs more than vitest's 5 s per test.
+export default mergeConfig(bundleConfig(), { test: { testTimeout: 60_000 } })

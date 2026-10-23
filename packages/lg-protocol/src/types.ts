@@ -122,6 +122,8 @@ export interface ParsedMessage {
   readonly fields: Readonly<Record<string, unknown>>
   /** Everything after the `---` terminator, verbatim. */
   readonly body: string
+  /** The field region exactly as written (no trailing newline); lets {@link formatParsed} round-trip it. */
+  readonly yamlText?: string
   /** The complete file text exactly as read. */
   readonly raw: string
 }
@@ -131,19 +133,43 @@ export type ParseResult =
   | { readonly ok: true; readonly message: ParsedMessage }
   | { readonly ok: false; readonly errors: readonly MessageError[] }
 
-/** Sequence numbers at or below this one predate the contract and are exempt (channel-git.md §10). */
+/** Sequence numbers at or below this one may hold a pre-contract message (channel-git.md §10). */
 export const LEGACY_MAX_SEQ = '0002'
 
-/** True for messages that must be validated against the §4 field rules. */
+/** True for a sequence in the legacy range. A sequence alone no longer grants the exemption; see {@link isLegacyMessage}. */
 export function isLegacySeq(seq: string): boolean {
   return seq <= LEGACY_MAX_SEQ
 }
 
-/** Human-readable prefix of a message rendered into the bound session. */
+/**
+ * True only for the two archived pre-contract messages, `0001-human-TASK.md`
+ * and `0002-local-REPORT.md` without an `id` field (PR-9 / channel-git.md §10).
+ * Anything else in the legacy range is validated like any other message.
+ * @param message - coordinates of the message.
+ * @returns whether the message is exempt from field validation.
+ */
+export function isLegacyMessage(message: Pick<ParsedMessage, 'seq' | 'sender' | 'type'> & { readonly fields?: Readonly<Record<string, unknown>> }): boolean {
+  // Pre-contract messages carry no id; every new message does (lg_post always
+  // assigns one), so a fresh channel's 0002 REPORT is never mistaken for one.
+  if (message.fields !== undefined && Object.prototype.hasOwnProperty.call(message.fields, 'id')) return false
+  return (
+    (message.seq === '0001' && message.sender === 'human' && message.type === 'TASK') ||
+    (message.seq === '0002' && message.sender === 'local' && message.type === 'REPORT')
+  )
+}
+
+/**
+ * Human-readable prefix of a message rendered into the bound session, e.g.
+ * `[LG #0042 DIRECTIVE v4 from global id=G-0012]` (SPEC "投递").
+ */
 export function deliveryLabel(message: Pick<ParsedMessage, 'seq' | 'type' | 'sender' | 'fields'>): string {
+  // The id is untrusted field text: only a well-formed one may enter the label.
+  const id = message.fields['id']
+  const idPart = typeof id === 'string' && ID_RE.test(id) ? ` id=${id}` : ''
   if (message.type === 'DIRECTIVE') {
     const version = message.fields['version']
-    return `[LG #${message.seq} DIRECTIVE v${String(version)} from ${message.sender}]`
+    const shown = typeof version === 'number' && Number.isInteger(version) ? String(version) : '?'
+    return `[LG #${message.seq} DIRECTIVE v${shown} from ${message.sender}${idPart}]`
   }
-  return `[LG #${message.seq} ${message.type} from ${message.sender}]`
+  return `[LG #${message.seq} ${message.type} from ${message.sender}${idPart}]`
 }
