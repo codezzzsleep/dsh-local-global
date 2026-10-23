@@ -113,6 +113,7 @@ export function parseMessage(filename: string, text: string): ParseResult {
       filename,
       fields,
       body: bodyLines.join('\n'),
+      yamlText: yamlLines.join('\n'),
       raw: text,
     },
   }
