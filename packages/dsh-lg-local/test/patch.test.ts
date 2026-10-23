@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -87,5 +87,100 @@ describe('PA-1: the four outcomes', () => {
     const result = applyPatch({ name, base: '0000000000000000000000000000000000000000', bytes: patch.length, sha256: sha256(patch), data: patch }, dir)
     expect(result.verdict).toBe('REJECTED')
     expect(result.detail).toContain('not an ancestor')
+  })
+})
+
+describe('PA-1: the worktree is never harmed', () => {
+  const fieldsOf = (patch: Buffer, base: string, name: string) => ({ name, base, bytes: patch.length, sha256: sha256(patch), data: patch })
+
+  it('refuses a dirty worktree, whatever the patch would do, and leaves the dirt alone', () => {
+    const { dir, patch, base, name } = repoWithPatch()
+    writeFileSync(join(dir, 'note.txt'), 'my uncommitted edit
+')
+    writeFileSync(join(dir, 'scratch.txt'), 'untracked work
+')
+    const result = applyPatch(fieldsOf(patch, base, name), dir)
+    expect(result.verdict).toBe('REJECTED')
+    expect(result.detail).toMatch(/uncommitted.*note\.txt/)
+    expect(readFileSync(join(dir, 'note.txt'), 'utf8')).toBe('my uncommitted edit\n')
+    expect(readFileSync(join(dir, 'scratch.txt'), 'utf8')).toBe('untracked work\n')
+    expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(base)
+  })
+
+  it('a conflict on a clean tree restores HEAD, index and files, and leaves no am in progress', () => {
+    const { dir, patch, base, name } = repoWithPatch()
+    // Same line, different change: `git am --3way` stops with conflict markers in the file.
+    writeFileSync(join(dir, 'note.txt'), 'uno\n')
+    git(dir, 'add', '-A')
+    git(dir, 'commit', '--quiet', '-m', 'diverge on the same line')
+    const before = git(dir, 'rev-parse', 'HEAD').trim()
+    const result = applyPatch(fieldsOf(patch, base, name), dir)
+    expect(result.verdict).toBe('CONFLICT')
+    expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(before)
+    expect(git(dir, 'status', '--porcelain')).toBe('')
+    expect(readFileSync(join(dir, 'note.txt'), 'utf8')).toBe('uno\n')
+    expect(existsSync(join(dir, '.git', 'rebase-apply'))).toBe(false)
+  })
+
+  it('does not call a non-mbox attachment or a missing git identity a conflict', () => {
+    const { dir, base, name } = repoWithPatch()
+    const text = Buffer.from('this is not a patch\n')
+    const notMbox = applyPatch(fieldsOf(text, base, name), dir)
+    expect(notMbox).toMatchObject({ verdict: 'REJECTED' })
+    expect(notMbox.detail).toContain('not a git format-patch')
+
+    const bare = repoWithPatch()
+    git(bare.dir, 'config', '--unset', 'user.name')
+    git(bare.dir, 'config', '--unset', 'user.email')
+    git(bare.dir, 'config', 'user.useConfigOnly', 'true')
+    const saved = process.env['GIT_CONFIG_GLOBAL']
+    process.env['GIT_CONFIG_GLOBAL'] = '/dev/null'
+    try {
+      const result = applyPatch(fieldsOf(bare.patch, bare.base, bare.name), bare.dir)
+      expect(result.verdict).toBe('REJECTED')
+      expect(result.detail).toContain('identity')
+    } finally {
+      if (saved === undefined) delete process.env['GIT_CONFIG_GLOBAL']
+      else process.env['GIT_CONFIG_GLOBAL'] = saved
+    }
+    expect(git(bare.dir, 'status', '--porcelain')).toBe('')
+  })
+
+  it('reports a git failure that is not a conflict as REJECTED and restores the worktree', () => {
+    const { dir, patch, base, name } = repoWithPatch()
+    // A pre-commit style failure: the commit hook refuses, `git am` stops without a conflict.
+    mkdirSync(join(dir, '.git', 'hooks'), { recursive: true })
+    writeFileSync(join(dir, '.git', 'hooks', 'applypatch-msg'), '#!/bin/sh\necho refused by hook >&2\nexit 1\n', { mode: 0o755 })
+    const result = applyPatch(fieldsOf(patch, base, name), dir)
+    expect(result.verdict).toBe('REJECTED')
+    expect(result.detail).toContain('other than a conflict')
+    expect(git(dir, 'status', '--porcelain')).toBe('')
+    expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(base)
+    expect(existsSync(join(dir, '.git', 'rebase-apply'))).toBe(false)
+  })
+
+  it('refuses while a git am is already in progress', () => {
+    const { dir, patch, base, name } = repoWithPatch()
+    mkdirSync(join(dir, '.git', 'rebase-apply'))
+    const result = applyPatch(fieldsOf(patch, base, name), dir)
+    expect(result).toMatchObject({ verdict: 'REJECTED' })
+    expect(result.detail).toContain('in progress')
+  })
+
+  it('refuses a directory that is not a worktree', () => {
+    const { patch, base, name } = repoWithPatch()
+    const result = applyPatch(fieldsOf(patch, base, name), mkdtempSync(join(tmpdir(), 'lg-nogit-')))
+    expect(result).toMatchObject({ verdict: 'REJECTED' })
+  })
+
+  it('never lets the patch name reach the file system', () => {
+    const { dir, patch, base } = repoWithPatch()
+    for (const name of ['../x', '../../x.patch', 'a/b.patch', '.hidden', '']) {
+      expect(applyPatch(fieldsOf(patch, base, name), dir).verdict).toBe('REJECTED')
+    }
+    expect(existsSync(join(tmpdir(), 'x.patch'))).toBe(false)
+    expect(existsSync(join(tmpdir(), 'x'))).toBe(false)
+    // A plain name still works, and the scratch copy is not named after it.
+    expect(applyPatch(fieldsOf(patch, base, 'ok-1.patch'), dir).verdict).toBe('APPLIED')
   })
 })
