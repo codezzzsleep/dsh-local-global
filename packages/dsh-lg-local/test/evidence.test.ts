@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { DEFAULT_SECRET_PATTERNS, resolveEvidenceConfig, secretHits } from '../src/evidence.js'
+import { DEFAULT_SECRET_PATTERNS, TREE_DIGEST, domainHits, resolveEvidenceConfig, secretHits } from '../src/evidence.js'
 
 describe('secret scan (EV-5)', () => {
   it('flags a token= line and a key', () => {
@@ -16,9 +16,10 @@ describe('secret scan (EV-5)', () => {
 })
 
 describe('resolveEvidenceConfig', () => {
-  it('defaults the digest command and the evidence root', () => {
+  it('defaults the digest to the tree without the evidence root, and the evidence root', () => {
+    // Not `git rev-parse HEAD`: committing a manifest moves HEAD and would make it stale at once.
     const config = resolveEvidenceConfig({}, '/srv/repo')
-    expect(config.digestCommand).toBe('git rev-parse HEAD')
+    expect(config.digestCommand).toBe(TREE_DIGEST)
     expect(config.evidenceRoot).toBe('/srv/repo/evidence')
     expect(config.secretPatterns.length).toBeGreaterThan(5)
   })
@@ -28,6 +29,24 @@ describe('resolveEvidenceConfig', () => {
     expect(config.digestCommand).toBe('git log -1 --format=%H')
     expect(config.evidenceRoot).toBe('/srv/repo/ev')
     expect(config.secretPatterns).toEqual(['x-token'])
+  })
+})
+
+describe('config and scan helpers', () => {
+  it('accepts the argv form of digestCommand that docs/implementation.md shows', () => {
+    expect(resolveEvidenceConfig({ digestCommand: ['git', 'log', '-1', '--format=%H x'] }, '/srv/repo').digestCommand).toBe("git log -1 '--format=%H x'")
+  })
+
+  it('rejects an invalid secret pattern at start-up instead of failing at scan time', () => {
+    expect(() => resolveEvidenceConfig({ secretPatterns: ['('] }, '/srv/repo')).toThrow(/not a valid regular expression/)
+  })
+
+  it('finds configured public domains, subdomains included, and not look-alikes', () => {
+    const domains = resolveEvidenceConfig({ publicDomains: ['Example.com'] }, '/srv/repo').publicDomains
+    expect(domains).toEqual(['example.com'])
+    expect(domainHits('see https://api.EXAMPLE.com/x', domains)).toEqual(['example.com'])
+    expect(domainHits('mail me@example.com', domains)).toEqual(['example.com'])
+    expect(domainHits('notexample.com and example.community', domains)).toEqual([])
   })
 })
 
