@@ -39,7 +39,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@local-global/lg-protocol": "file:../lg-protocol"
+    "@local-global/lg-protocol": "workspace:*"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.5",

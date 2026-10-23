@@ -1,0 +1,7 @@
+# Git identity for the test suites only (wired in by vitest.shared.ts), so
+# `pnpm -r test` does not depend on the machine's global git config.
+[user]
+	name = lg-test
+	email = lg-test@example.invalid
+[init]
+	defaultBranch = main

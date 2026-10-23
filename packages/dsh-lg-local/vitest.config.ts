@@ -1,5 +1,3 @@
-import { defineConfig } from 'vitest/config'
+import { bundleConfig } from '../../vitest.shared.js'
 
-export default defineConfig({
-  test: { include: ['test/**/*.test.ts'] },
-})
+export default bundleConfig()
