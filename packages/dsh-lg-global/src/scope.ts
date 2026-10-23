@@ -321,6 +321,21 @@ export function hostAllowed(host: string, allowDomains: readonly string[]): bool
   return allowDomains.some((domain) => lower === domain || lower.endsWith(`.${domain}`))
 }
 
+/**
+ * STOP carries invariant 5, so it has one door: `lg_stop` checks the evidence
+ * before it writes. The generic channel tools must not be a way around it.
+ * @param tool - the tool being called.
+ * @param args - its arguments.
+ * @returns a denial reason when the call would write a STOP, otherwise undefined.
+ */
+export function stopBypass(tool: string, args: unknown): string | undefined {
+  const record = typeof args === 'object' && args !== null ? (args as Record<string, unknown>) : {}
+  let sendsStop = false
+  if (tool === 'lg_post') sendsStop = String(record['type'] ?? '').trim().toUpperCase() === 'STOP'
+  else if (tool === 'lg_record_relayed') sendsStop = typeof record['text'] === 'string' && /^\[LG STOP from /u.test(record['text'])
+  return sendsStop ? `lg-scope: ${tool} may not send a STOP; only lg_stop may, because it checks the evidence first` : undefined
+}
+
 /** Extract the path argument of a path-scoped tool call, by the tool's own argument name. */
 export function pathArgument(args: unknown, tool?: string): string | undefined {
   if (typeof args !== 'object' || args === null) return undefined
@@ -520,6 +535,9 @@ export function createScopeRuntime(deps: ScopeRuntimeDeps): ScopeRuntime {
       if (toolName !== 'lg_integrity_check' && !state.isAgentReady(exec.agent)) {
         return 'lg-scope: the integrity check for this session has not completed'
       }
+
+      const bypass = stopBypass(toolName, exec.arguments)
+      if (bypass !== undefined) return bypass
 
       if (toolName === 'web_fetch') {
         const url = urlOf(exec.arguments)
